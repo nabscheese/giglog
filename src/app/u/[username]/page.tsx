@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ExternalLink, Instagram, MapPin, Music2, Pencil } from 'lucide-react';
+import { Award, ExternalLink, Instagram, MapPin, Music2, Pencil } from 'lucide-react';
 import { Nav } from '@/components/Nav';
 import { AuthGuard } from '@/components/AuthGuard';
 import { FollowButton } from '@/components/FollowButton';
@@ -12,6 +12,7 @@ import { Loading } from '@/components/Loading';
 import { VenueMap } from '@/components/VenueMap';
 import { BulkPublishGigs } from '@/components/BulkPublishGigs';
 import { supabase } from '@/lib/supabase';
+import { buildAchievements } from '@/lib/achievements';
 import type { Gig, Profile } from '@/lib/types';
 
 export default function PublicProfile() {
@@ -76,6 +77,10 @@ export default function PublicProfile() {
   const isOwner = Boolean(profile && viewerId === profile.id);
   const visibleGigs = useMemo(() => (isOwner ? gigs : gigs.filter((gig) => gig.is_public)), [gigs, isOwner]);
   const publicGigs = useMemo(() => gigs.filter((gig) => gig.is_public), [gigs]);
+  const earnedBadges = useMemo(
+    () => buildAchievements(visibleGigs).filter((badge) => badge.unlocked),
+    [visibleGigs],
+  );
 
   const stats = useMemo(() => {
     const artists = new Set(visibleGigs.map((gig) => gig.artist_name.toLowerCase()));
@@ -164,6 +169,32 @@ export default function PublicProfile() {
           <div className="wide"><span>Top artist</span><strong>{stats.topArtist}</strong></div>
           <div className="wide"><span>Top venue</span><strong>{stats.topVenue}</strong></div>
         </section>
+
+        {earnedBadges.length ? (
+          <section className="profile-badge-showcase" aria-label="Earned badges">
+            <div className="profile-badge-heading">
+              <div>
+                <span className="eyebrow">// achievements unlocked</span>
+                <h2><Award size={22} /> Badge cabinet</h2>
+                <p>{earnedBadges.length} {earnedBadges.length === 1 ? 'badge' : 'badges'} earned so far.</p>
+              </div>
+              <Link className="ghost" href="/achievements">View all badges</Link>
+            </div>
+
+            <div className="profile-badge-grid">
+              {earnedBadges.slice(0, 8).map((badge) => (
+                <article className={`profile-badge-card ${badge.tier}`} key={badge.id}>
+                  <span className="profile-badge-icon" aria-hidden="true">{badge.icon}</span>
+                  <div>
+                    <span className="profile-badge-tier">{badge.tier}</span>
+                    <h3>{badge.name}</h3>
+                    <p>{badge.description}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {mapGigs.length ? <VenueMap gigs={mapGigs} /> : null}
 

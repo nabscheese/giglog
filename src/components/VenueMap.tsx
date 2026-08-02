@@ -5,7 +5,6 @@ import { Map as MapIcon, MapPin, RefreshCw, Route, Sparkles } from 'lucide-react
 import { supabase } from '@/lib/supabase';
 
 type Range = 'month' | 'year' | 'all';
-type ViewMode = 'journey' | 'venues';
 
 type VenueGig = {
   id: string;
@@ -154,7 +153,6 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const mapNode = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
   const [range, setRange] = useState<Range>('all');
-  const [viewMode, setViewMode] = useState<ViewMode>('journey');
   const [resolvedGigs, setResolvedGigs] = useState(gigs);
   const [status, setStatus] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -260,11 +258,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   }, [range, gigs.length]);
 
   useEffect(() => {
-    if (viewMode !== 'venues' || !mapNode.current) {
-      mapInstance.current?.remove();
-      mapInstance.current = null;
-      return;
-    }
+    if (!mapNode.current) return;
 
     let cancelled = false;
     void loadLeaflet()
@@ -273,7 +267,12 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         mapInstance.current?.remove();
 
         const map = L.map(mapNode.current, {
-          scrollWheelZoom: false,
+          scrollWheelZoom: true,
+          touchZoom: true,
+          dragging: true,
+          doubleClickZoom: true,
+          boxZoom: true,
+          keyboard: true,
           zoomControl: true,
           preferCanvas: false,
         });
@@ -323,7 +322,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
       mapInstance.current?.remove();
       mapInstance.current = null;
     };
-  }, [venues, viewMode]);
+  }, [venues]);
 
   const locatedCount = venues.filter((venue) => venue.latitude != null).length;
   const cities = new Set(filtered.map((gig) => gig.city?.trim()).filter(Boolean)).size;
@@ -348,19 +347,10 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
                 setActiveStop(null);
               }}
             >
-              {value === 'all' ? 'All time' : value[0].toUpperCase() + value.slice(1)}
+              {value === 'all' ? 'All time' : value === 'year' ? 'This year' : 'This month'}
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="journey-view-switch" aria-label="Journey style">
-        <button type="button" className={viewMode === 'journey' ? 'active' : ''} onClick={() => setViewMode('journey')}>
-          <Sparkles size={15} /> Journey graphic
-        </button>
-        <button type="button" className={viewMode === 'venues' ? 'active' : ''} onClick={() => setViewMode('venues')}>
-          <MapPin size={15} /> Venue map
-        </button>
       </div>
 
       <div className="venue-map-stats">
@@ -370,88 +360,94 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         <div><strong>{routeDistance.toLocaleString()}</strong><span>Route km</span></div>
       </div>
 
-      {viewMode === 'journey' ? (
-        <div className="gig-journey-graphic-wrap">
-          <div className="gig-journey-graphic-label"><Sparkles size={14} /> Your live-music trail</div>
-          {graphicPoints.length ? (
-            <svg
-              className="gig-journey-graphic"
-              viewBox={`0 0 ${GRAPHIC_WIDTH} ${GRAPHIC_HEIGHT}`}
-              role="img"
-              aria-label={`Graphic route connecting ${graphicPoints.length} gigs across ${venues.length} venues`}
-            >
-              <defs>
-                <linearGradient id="journeyGlow" x1="0" x2="1">
-                  <stop offset="0%" stopColor="var(--acid)" />
-                  <stop offset="42%" stopColor="var(--pink)" />
-                  <stop offset="100%" stopColor="#ff4d5f" />
-                </linearGradient>
-                <filter id="routeGlow" x="-30%" y="-30%" width="160%" height="160%">
-                  <feGaussianBlur stdDeviation="5" result="blur" />
-                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
-              </defs>
+      <div className="gig-journey-graphic-wrap">
+        <div className="gig-journey-graphic-label"><Sparkles size={14} /> Your live-music trail</div>
+        {graphicPoints.length ? (
+          <svg
+            className="gig-journey-graphic"
+            viewBox={`0 0 ${GRAPHIC_WIDTH} ${GRAPHIC_HEIGHT}`}
+            role="img"
+            aria-label={`Graphic route connecting ${graphicPoints.length} gigs across ${venues.length} venues`}
+          >
+            <defs>
+              <linearGradient id="journeyGlow" x1="0" x2="1">
+                <stop offset="0%" stopColor="var(--acid)" />
+                <stop offset="42%" stopColor="var(--pink)" />
+                <stop offset="100%" stopColor="#ff4d5f" />
+              </linearGradient>
+              <filter id="routeGlow" x="-30%" y="-30%" width="160%" height="160%">
+                <feGaussianBlur stdDeviation="5" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
 
-              <rect className="journey-graphic-bg" width={GRAPHIC_WIDTH} height={GRAPHIC_HEIGHT} rx="18" />
-              <path className="journey-contour journey-contour-one" d="M -20 130 C 190 20, 360 240, 560 110 S 870 110, 1040 30" />
-              <path className="journey-contour journey-contour-two" d="M -40 400 C 170 250, 340 520, 570 350 S 830 450, 1060 260" />
-              <path className="journey-contour journey-contour-three" d="M 100 -20 C 250 160, 260 330, 80 590" />
-              <path className="journey-route-shadow" d={graphicPath} />
-              <path className="journey-route-line" d={graphicPath} />
+            <rect className="journey-graphic-bg" width={GRAPHIC_WIDTH} height={GRAPHIC_HEIGHT} rx="18" />
+            <path className="journey-contour journey-contour-one" d="M -20 130 C 190 20, 360 240, 560 110 S 870 110, 1040 30" />
+            <path className="journey-contour journey-contour-two" d="M -40 400 C 170 250, 340 520, 570 350 S 830 450, 1060 260" />
+            <path className="journey-contour journey-contour-three" d="M 100 -20 C 250 160, 260 330, 80 590" />
+            <path className="journey-route-shadow" d={graphicPath} />
+            <path className="journey-route-line" d={graphicPath} />
 
-              {graphicPoints.map((point, index) => {
-                const isFirst = index === 0;
-                const isLast = index === graphicPoints.length - 1;
-                const isActive = activeStop === index;
-                const showLabel = graphicPoints.length <= 14 || isFirst || isLast || index % Math.ceil(graphicPoints.length / 10) === 0;
-                const labelAbove = index % 2 === 0;
-                return (
-                  <g
-                    key={`${point.id}-${index}`}
-                    className={`journey-stop ${isActive ? 'active' : ''}`}
-                    transform={`translate(${point.x} ${point.y})`}
-                    onClick={() => setActiveStop(isActive ? null : index)}
-                    role="button"
-                    aria-label={`${point.artist_name} at ${point.venue_name}`}
-                  >
-                    <circle className="journey-stop-ring" r={isFirst || isLast ? 16 : 12} />
-                    <circle className="journey-stop-dot" r={isFirst || isLast ? 8 : 6} />
-                    <text className="journey-stop-number" y="3">{isFirst ? 'S' : isLast ? '★' : index + 1}</text>
-                    {showLabel ? (
-                      <g className="journey-stop-label" transform={`translate(0 ${labelAbove ? -31 : 38})`}>
-                        <rect x="-78" y="-17" width="156" height="34" rx="5" />
-                        <text y="-2">{point.venue_name.slice(0, 24)}</text>
-                        <text className="journey-stop-city" y="11">{(point.city || point.country || '').slice(0, 28)}</text>
-                      </g>
-                    ) : null}
-                  </g>
-                );
-              })}
-            </svg>
-          ) : (
-            <div className="journey-graphic-empty">
-              <Route size={34} />
-              <strong>No mapped venues in this period yet</strong>
-              <span>Retry missing venues below or switch to All time.</span>
-            </div>
-          )}
+            {graphicPoints.map((point, index) => {
+              const isFirst = index === 0;
+              const isLast = index === graphicPoints.length - 1;
+              const isActive = activeStop === index;
+              const showLabel = graphicPoints.length <= 14 || isFirst || isLast || index % Math.ceil(graphicPoints.length / 10) === 0;
+              const labelAbove = index % 2 === 0;
+              return (
+                <g
+                  key={`${point.id}-${index}`}
+                  className={`journey-stop ${isActive ? 'active' : ''}`}
+                  transform={`translate(${point.x} ${point.y})`}
+                  onClick={() => setActiveStop(isActive ? null : index)}
+                  role="button"
+                  aria-label={`${point.artist_name} at ${point.venue_name}`}
+                >
+                  <circle className="journey-stop-ring" r={isFirst || isLast ? 16 : 12} />
+                  <circle className="journey-stop-dot" r={isFirst || isLast ? 8 : 6} />
+                  <text className="journey-stop-number" y="3">{isFirst ? 'S' : isLast ? '★' : index + 1}</text>
+                  {showLabel ? (
+                    <g className="journey-stop-label" transform={`translate(0 ${labelAbove ? -31 : 38})`}>
+                      <rect x="-78" y="-17" width="156" height="34" rx="5" />
+                      <text y="-2">{point.venue_name.slice(0, 24)}</text>
+                      <text className="journey-stop-city" y="11">{(point.city || point.country || '').slice(0, 28)}</text>
+                    </g>
+                  ) : null}
+                </g>
+              );
+            })}
+          </svg>
+        ) : (
+          <div className="journey-graphic-empty">
+            <Route size={34} />
+            <strong>No mapped venues in this period yet</strong>
+            <span>Retry missing venues below or switch to All time.</span>
+          </div>
+        )}
 
-          {selectedStop ? (
-            <div className="journey-stop-card">
-              <span>Stop {selectedStop.index + 1}</span>
-              <strong>{selectedStop.artist_name}</strong>
-              <p>{selectedStop.venue_name} · {[selectedStop.city, selectedStop.country].filter(Boolean).join(', ')}</p>
-              <small>{new Date(`${selectedStop.event_date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })}</small>
-              <a href={`/gigs/${selectedStop.id}`}>Open memory</a>
-            </div>
-          ) : null}
+        {selectedStop ? (
+          <div className="journey-stop-card">
+            <span>Stop {selectedStop.index + 1}</span>
+            <strong>{selectedStop.artist_name}</strong>
+            <p>{selectedStop.venue_name} · {[selectedStop.city, selectedStop.country].filter(Boolean).join(', ')}</p>
+            <small>{new Date(`${selectedStop.event_date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })}</small>
+            <a href={`/gigs/${selectedStop.id}`}>Open memory</a>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="venue-map-section-heading">
+        <div>
+          <span className="eyebrow">// explore the real places</span>
+          <h3><MapPin size={20} /> Venue map</h3>
         </div>
-      ) : (
-        <div className="journey-map-frame">
-          <div className="journey-map-label"><MapIcon size={14} /> Venue collection</div>
-          <div ref={mapNode} className="venue-map-canvas" aria-label="Map of your visited gig venues" />
-        </div>
-      )}
+        <p>Drag to move, pinch or scroll to zoom, then tap a venue pin.</p>
+      </div>
+
+      <div className="journey-map-frame">
+        <div className="journey-map-label"><MapIcon size={14} /> Venue collection</div>
+        <div ref={mapNode} className="venue-map-canvas" aria-label="Map of your visited gig venues" />
+      </div>
 
       <div className="venue-map-footer">
         <span>{status || (locatedCount ? `${locatedCount} venues mapped.` : 'Venue locations will be added automatically.')}</span>
