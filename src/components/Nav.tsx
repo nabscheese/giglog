@@ -1,4 +1,4 @@
 'use client';
 import Link from 'next/link'; import { usePathname,useRouter } from 'next/navigation'; import { supabase } from '@/lib/supabase';
-const links=[['/dashboard','Dashboard'],['/','Archive'],['/feed','Feed'],['/discover','Discover'],['/artists','Artists'],['/venues','Venues'],['/festivals','Festivals'],['/people','People'],['/stats','Stats'],['/profile','Profile']];
+const links=[['/dashboard','Dashboard'],['/','Archive'],['/feed','Feed'],['/discover','Discover'],['/artists','Artists'],['/venues','Venues'],['/festivals','Festivals'],['/people','People'],['/stats','Stats'],['/achievements','Badges'],['/passport','Passport'],['/profile','Profile']];
 export function Nav(){const path=usePathname();const router=useRouter();return <nav className="nav"><Link className="brand" href="/dashboard">GIG <span>LOG</span></Link><div className="navlinks">{links.map(([href,label])=><Link key={href} className={path===href||path.startsWith(href+'/')?'active':''} href={href}>{label}</Link>)}</div><button className="ghost" onClick={async()=>{await supabase.auth.signOut();router.push('/auth')}}>Sign out</button></nav>}
