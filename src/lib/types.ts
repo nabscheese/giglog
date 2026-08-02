@@ -24,6 +24,8 @@ export type Gig = {
   event_type?: 'gig' | 'festival' | 'club-night' | 'comedy' | 'other';
   city?: string | null;
   country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   ticket_url?: string | null;
   photo_urls?: string[] | null;
   is_public?: boolean;

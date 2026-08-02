@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Map as MapIcon, MapPin, RefreshCw, Route } from 'lucide-react';
+import { Map as MapIcon, MapPin, RefreshCw, Route, Sparkles } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 type Range = 'month' | 'year' | 'all';
@@ -11,18 +11,24 @@ type VenueGig = {
   id: string;
   artist_name: string;
   venue_name: string;
-  city: string | null;
-  country: string | null;
+  city?: string | null;
+  country?: string | null;
   event_date: string;
   overall_rating: number;
-  latitude: number | null;
-  longitude: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 type LeafletMap = {
   remove: () => void;
   fitBounds: (bounds: unknown, options?: unknown) => void;
   setView: (coords: [number, number], zoom: number) => void;
+};
+
+type GraphicPoint = VenueGig & {
+  x: number;
+  y: number;
+  index: number;
 };
 
 declare global {
@@ -33,6 +39,10 @@ declare global {
 
 const LEAFLET_SCRIPT = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
 const LEAFLET_STYLES = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+const GRAPHIC_WIDTH = 1000;
+const GRAPHIC_HEIGHT = 560;
+const GRAPHIC_PADDING_X = 90;
+const GRAPHIC_PADDING_Y = 70;
 
 function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
@@ -95,6 +105,51 @@ function distanceKm(a: [number, number], b: [number, number]) {
   return radius * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
+function makeGraphicPoints(gigs: VenueGig[]): GraphicPoint[] {
+  if (!gigs.length) return [];
+
+  const latitudes = gigs.map((gig) => gig.latitude!);
+  const longitudes = gigs.map((gig) => gig.longitude!);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.25);
+  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.25);
+
+  return gigs.map((gig, index) => {
+    const baseX =
+      GRAPHIC_PADDING_X +
+      ((gig.longitude! - minLongitude) / longitudeSpan) *
+        (GRAPHIC_WIDTH - GRAPHIC_PADDING_X * 2);
+    const baseY =
+      GRAPHIC_PADDING_Y +
+      (1 - (gig.latitude! - minLatitude) / latitudeSpan) *
+        (GRAPHIC_HEIGHT - GRAPHIC_PADDING_Y * 2);
+
+    // A tiny deterministic offset keeps repeated visits visible as separate stops.
+    const repeatOffset = index % 3 === 0 ? -6 : index % 3 === 1 ? 0 : 6;
+    return { ...gig, index, x: baseX + repeatOffset, y: baseY + repeatOffset / 2 };
+  });
+}
+
+function smoothPath(points: GraphicPoint[]) {
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  let path = `M ${points[0].x} ${points[0].y}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const midpointX = (current.x + next.x) / 2;
+    const midpointY = (current.y + next.y) / 2;
+    path += ` Q ${current.x} ${current.y}, ${midpointX} ${midpointY}`;
+  }
+  const last = points[points.length - 1];
+  path += ` T ${last.x} ${last.y}`;
+  return path;
+}
+
 export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const mapNode = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
@@ -103,6 +158,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const [resolvedGigs, setResolvedGigs] = useState(gigs);
   const [status, setStatus] = useState('');
   const [geocoding, setGeocoding] = useState(false);
+  const [activeStop, setActiveStop] = useState<number | null>(null);
 
   useEffect(() => setResolvedGigs(gigs), [gigs]);
 
@@ -135,6 +191,9 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         .sort((a, b) => a.event_date.localeCompare(b.event_date)),
     [filtered],
   );
+
+  const graphicPoints = useMemo(() => makeGraphicPoints(journey), [journey]);
+  const graphicPath = useMemo(() => smoothPath(graphicPoints), [graphicPoints]);
 
   const routeDistance = useMemo(() => {
     let total = 0;
@@ -174,7 +233,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
           .update({ latitude: body.latitude, longitude: body.longitude })
           .in('id', ids);
       } catch {
-        // A failed venue is skipped so the rest of the journey can still render.
+        // Skip failed venues so the rest of the graphic still renders.
       }
     }
 
@@ -201,9 +260,13 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   }, [range, gigs.length]);
 
   useEffect(() => {
-    if (!mapNode.current) return;
-    let cancelled = false;
+    if (viewMode !== 'venues' || !mapNode.current) {
+      mapInstance.current?.remove();
+      mapInstance.current = null;
+      return;
+    }
 
+    let cancelled = false;
     void loadLeaflet()
       .then((L) => {
         if (cancelled || !mapNode.current) return;
@@ -223,90 +286,48 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         }).addTo(map);
 
         const bounds: [number, number][] = [];
-
-        if (viewMode === 'journey') {
-          const routePoints: [number, number][] = journey.map((gig) => [
-            gig.latitude!,
-            gig.longitude!,
-          ]);
-
-          if (routePoints.length > 1) {
-            L.polyline(routePoints, {
-              color: '#ff2f45',
-              weight: 4,
-              opacity: 0.95,
-              lineJoin: 'round',
-              className: 'gig-journey-route',
-            }).addTo(map);
-          }
-
-          journey.forEach((gig, index) => {
-            const coords: [number, number] = [gig.latitude!, gig.longitude!];
+        venues
+          .filter((venue) => venue.latitude != null && venue.longitude != null)
+          .forEach((venue) => {
+            const coords: [number, number] = [venue.latitude!, venue.longitude!];
             bounds.push(coords);
-            const first = index === 0;
-            const last = index === journey.length - 1;
-            const markerClass = first ? 'start' : last ? 'finish' : '';
+            const artists = [...new Set(venue.gigs.map((gig) => gig.artist_name))];
+            const latest = venue.gigs[0];
             const icon = L.divIcon({
-              className: 'gig-route-marker-shell',
-              html: `<span class="gig-route-marker ${markerClass}">${first ? '▶' : last ? '★' : index + 1}</span>`,
-              iconSize: [30, 30],
-              iconAnchor: [15, 15],
-              popupAnchor: [0, -16],
+              className: 'gig-venue-pin-shell',
+              html: `<span class="gig-venue-pin"><i>${venue.gigs.length}</i></span>`,
+              iconSize: [38, 46],
+              iconAnchor: [19, 44],
+              popupAnchor: [0, -40],
             });
             const popup = `
               <div class="venue-map-popup">
-                <em>${first ? 'Journey starts here' : last ? 'Latest stop' : `Stop ${index + 1}`}</em>
-                <strong>${escapeHtml(gig.artist_name)}</strong>
-                <span>${escapeHtml(gig.venue_name)}</span>
-                <small>${escapeHtml([gig.city, gig.country].filter(Boolean).join(', '))}</small>
-                <b>${new Date(`${gig.event_date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })}</b>
-                <a href="/gigs/${encodeURIComponent(gig.id)}">Open memory</a>
+                <em>Venue collected</em>
+                <strong>${escapeHtml(venue.venue)}</strong>
+                <span>${escapeHtml([venue.city, venue.country].filter(Boolean).join(', '))}</span>
+                <b>${venue.gigs.length} ${venue.gigs.length === 1 ? 'gig' : 'gigs'}</b>
+                <small>${escapeHtml(artists.slice(0, 6).join(' · '))}</small>
+                <a href="/gigs/${encodeURIComponent(latest.id)}">Open latest memory</a>
               </div>`;
             L.marker(coords, { icon }).addTo(map).bindPopup(popup);
           });
-        } else {
-          venues
-            .filter((venue) => venue.latitude != null && venue.longitude != null)
-            .forEach((venue) => {
-              const coords: [number, number] = [venue.latitude!, venue.longitude!];
-              bounds.push(coords);
-              const artists = [...new Set(venue.gigs.map((gig) => gig.artist_name))];
-              const latest = venue.gigs[0];
-              const icon = L.divIcon({
-                className: 'gig-venue-pin-shell',
-                html: `<span class="gig-venue-pin"><i>${venue.gigs.length}</i></span>`,
-                iconSize: [38, 46],
-                iconAnchor: [19, 44],
-                popupAnchor: [0, -40],
-              });
-              const popup = `
-                <div class="venue-map-popup">
-                  <em>Venue collected</em>
-                  <strong>${escapeHtml(venue.venue)}</strong>
-                  <span>${escapeHtml([venue.city, venue.country].filter(Boolean).join(', '))}</span>
-                  <b>${venue.gigs.length} ${venue.gigs.length === 1 ? 'gig' : 'gigs'}</b>
-                  <small>${escapeHtml(artists.slice(0, 6).join(' · '))}</small>
-                  <a href="/gigs/${encodeURIComponent(latest.id)}">Open latest memory</a>
-                </div>`;
-              L.marker(coords, { icon }).addTo(map).bindPopup(popup);
-            });
-        }
 
         if (bounds.length > 1) map.fitBounds(bounds, { padding: [38, 38], maxZoom: 12 });
         else if (bounds.length === 1) map.setView(bounds[0], 13);
         else map.setView([54.5, -3.2], 5);
       })
-      .catch(() => setStatus('Your gig journey could not be loaded.'));
+      .catch(() => setStatus('Your venue map could not be loaded.'));
 
     return () => {
       cancelled = true;
       mapInstance.current?.remove();
       mapInstance.current = null;
     };
-  }, [journey, venues, viewMode]);
+  }, [venues, viewMode]);
 
   const locatedCount = venues.filter((venue) => venue.latitude != null).length;
   const cities = new Set(filtered.map((gig) => gig.city?.trim()).filter(Boolean)).size;
+  const selectedStop = activeStop == null ? null : graphicPoints[activeStop] || null;
 
   return (
     <section className="panel venue-map-panel" aria-labelledby="venue-map-title">
@@ -314,7 +335,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         <div>
           <div className="eyebrow">// every venue, one live-music journey</div>
           <h2 id="venue-map-title"><Route size={25} /> Gig journey</h2>
-          <p>Follow your gigs in date order or switch to your collection of visited venues.</p>
+          <p>A shareable route graphic of every venue you reached, in the order you visited.</p>
         </div>
         <div className="venue-map-filters" aria-label="Gig journey date range">
           {(['month', 'year', 'all'] as Range[]).map((value) => (
@@ -322,7 +343,10 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
               key={value}
               type="button"
               className={range === value ? 'active' : ''}
-              onClick={() => setRange(value)}
+              onClick={() => {
+                setRange(value);
+                setActiveStop(null);
+              }}
             >
               {value === 'all' ? 'All time' : value[0].toUpperCase() + value.slice(1)}
             </button>
@@ -330,12 +354,12 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         </div>
       </div>
 
-      <div className="journey-view-switch" aria-label="Map style">
+      <div className="journey-view-switch" aria-label="Journey style">
         <button type="button" className={viewMode === 'journey' ? 'active' : ''} onClick={() => setViewMode('journey')}>
-          <Route size={15} /> Journey route
+          <Sparkles size={15} /> Journey graphic
         </button>
         <button type="button" className={viewMode === 'venues' ? 'active' : ''} onClick={() => setViewMode('venues')}>
-          <MapPin size={15} /> Venue pins
+          <MapPin size={15} /> Venue map
         </button>
       </div>
 
@@ -346,13 +370,91 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         <div><strong>{routeDistance.toLocaleString()}</strong><span>Route km</span></div>
       </div>
 
-      <div className="journey-map-frame">
-        <div className="journey-map-label"><MapIcon size={14} /> {viewMode === 'journey' ? 'Chronological route' : 'Venue collection'}</div>
-        <div ref={mapNode} className="venue-map-canvas" aria-label="Map of your gig venues and journey" />
-      </div>
+      {viewMode === 'journey' ? (
+        <div className="gig-journey-graphic-wrap">
+          <div className="gig-journey-graphic-label"><Sparkles size={14} /> Your live-music trail</div>
+          {graphicPoints.length ? (
+            <svg
+              className="gig-journey-graphic"
+              viewBox={`0 0 ${GRAPHIC_WIDTH} ${GRAPHIC_HEIGHT}`}
+              role="img"
+              aria-label={`Graphic route connecting ${graphicPoints.length} gigs across ${venues.length} venues`}
+            >
+              <defs>
+                <linearGradient id="journeyGlow" x1="0" x2="1">
+                  <stop offset="0%" stopColor="var(--acid)" />
+                  <stop offset="42%" stopColor="var(--pink)" />
+                  <stop offset="100%" stopColor="#ff4d5f" />
+                </linearGradient>
+                <filter id="routeGlow" x="-30%" y="-30%" width="160%" height="160%">
+                  <feGaussianBlur stdDeviation="5" result="blur" />
+                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                </filter>
+              </defs>
+
+              <rect className="journey-graphic-bg" width={GRAPHIC_WIDTH} height={GRAPHIC_HEIGHT} rx="18" />
+              <path className="journey-contour journey-contour-one" d="M -20 130 C 190 20, 360 240, 560 110 S 870 110, 1040 30" />
+              <path className="journey-contour journey-contour-two" d="M -40 400 C 170 250, 340 520, 570 350 S 830 450, 1060 260" />
+              <path className="journey-contour journey-contour-three" d="M 100 -20 C 250 160, 260 330, 80 590" />
+              <path className="journey-route-shadow" d={graphicPath} />
+              <path className="journey-route-line" d={graphicPath} />
+
+              {graphicPoints.map((point, index) => {
+                const isFirst = index === 0;
+                const isLast = index === graphicPoints.length - 1;
+                const isActive = activeStop === index;
+                const showLabel = graphicPoints.length <= 14 || isFirst || isLast || index % Math.ceil(graphicPoints.length / 10) === 0;
+                const labelAbove = index % 2 === 0;
+                return (
+                  <g
+                    key={`${point.id}-${index}`}
+                    className={`journey-stop ${isActive ? 'active' : ''}`}
+                    transform={`translate(${point.x} ${point.y})`}
+                    onClick={() => setActiveStop(isActive ? null : index)}
+                    role="button"
+                    aria-label={`${point.artist_name} at ${point.venue_name}`}
+                  >
+                    <circle className="journey-stop-ring" r={isFirst || isLast ? 16 : 12} />
+                    <circle className="journey-stop-dot" r={isFirst || isLast ? 8 : 6} />
+                    <text className="journey-stop-number" y="3">{isFirst ? 'S' : isLast ? '★' : index + 1}</text>
+                    {showLabel ? (
+                      <g className="journey-stop-label" transform={`translate(0 ${labelAbove ? -31 : 38})`}>
+                        <rect x="-78" y="-17" width="156" height="34" rx="5" />
+                        <text y="-2">{point.venue_name.slice(0, 24)}</text>
+                        <text className="journey-stop-city" y="11">{(point.city || point.country || '').slice(0, 28)}</text>
+                      </g>
+                    ) : null}
+                  </g>
+                );
+              })}
+            </svg>
+          ) : (
+            <div className="journey-graphic-empty">
+              <Route size={34} />
+              <strong>No mapped venues in this period yet</strong>
+              <span>Retry missing venues below or switch to All time.</span>
+            </div>
+          )}
+
+          {selectedStop ? (
+            <div className="journey-stop-card">
+              <span>Stop {selectedStop.index + 1}</span>
+              <strong>{selectedStop.artist_name}</strong>
+              <p>{selectedStop.venue_name} · {[selectedStop.city, selectedStop.country].filter(Boolean).join(', ')}</p>
+              <small>{new Date(`${selectedStop.event_date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })}</small>
+              <a href={`/gigs/${selectedStop.id}`}>Open memory</a>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="journey-map-frame">
+          <div className="journey-map-label"><MapIcon size={14} /> Venue collection</div>
+          <div ref={mapNode} className="venue-map-canvas" aria-label="Map of your visited gig venues" />
+        </div>
+      )}
 
       <div className="venue-map-footer">
-        <span>{status || (locatedCount ? `${locatedCount} venue pins mapped.` : 'Venue locations will be added automatically.')}</span>
+        <span>{status || (locatedCount ? `${locatedCount} venues mapped.` : 'Venue locations will be added automatically.')}</span>
         {venues.some((venue) => venue.latitude == null) ? (
           <button className="ghost" type="button" disabled={geocoding} onClick={() => void locateMissingVenues()}>
             <RefreshCw size={14} /> {geocoding ? 'Locating…' : 'Retry missing venues'}
