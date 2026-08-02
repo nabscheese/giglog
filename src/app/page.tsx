@@ -33,7 +33,7 @@ export default function Home() {
 
       const { data } = await supabase
         .from('gigs')
-        .select('*, profiles(username,display_name,avatar_url), review_likes(user_id), comments(id)')
+        .select('*, profiles!gigs_user_id_profiles_fkey(username,display_name,avatar_url), review_likes(user_id), comments(id)')
         .order('event_date', { ascending: false });
 
       setGigs((data || []) as Gig[]);
