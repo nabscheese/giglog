@@ -1,11 +1,192 @@
 'use client';
-import { useEffect,useMemo,useState } from 'react'; import Link from 'next/link'; import { Nav } from '@/components/Nav'; import { AuthGuard } from '@/components/AuthGuard'; import { GigCard } from '@/components/GigCard'; import { Loading } from '@/components/Loading'; import { EmptyState } from '@/components/EmptyState'; import { supabase } from '@/lib/supabase'; import type { Gig } from '@/lib/types';
-export default function Home(){const [gigs,setGigs]=useState<Gig[]>([]);const [q,setQ]=useState('');const [mine,setMine]=useState(false);const [rating,setRating]=useState(0);const [loading,setLoading]=useState(true);const [userId,setUserId]=useState('');
- useEffect(()=>{(async()=>{const {data:{user}}=await supabase.auth.getUser();setUserId(user?.id||'');const {data}=await supabase.from('gigs').select('*, profiles(username,display_name,avatar_url), review_likes(user_id), comments(id)').order('event_date',{ascending:false});setGigs((data||[]) as Gig[]);setLoading(false)})()},[]);
- const shown=useMemo(()=>gigs.filter(g=>{const text=(g.artist_name+' '+g.venue_name+' '+(g.festival_name||'')+' '+(g.city||'')).toLowerCase();return text.includes(q.toLowerCase())&&(!mine||g.user_id===userId)&&(!rating||g.overall_rating>=rating)}),[gigs,q,mine,rating,userId]);
- const mineGigs=gigs.filter(g=>g.user_id===userId);const avg=mineGigs.length?(mineGigs.reduce((a,g)=>a+g.overall_rating,0)/mineGigs.length).toFixed(1):'—';
- return <AuthGuard><Nav/><main className="shell"><section className="hero"><div><div className="eyebrow">// every show, one torn stub at a time</div><h1>YOUR <span className="accent">ARCHIVE</span></h1><p className="hero-copy">Rate the night, keep the memory, find the next one.</p></div><Link className="btn" href="/gigs/new">+ Log a gig</Link></section>
- <div className="statcards"><div className="statcard"><strong>{mineGigs.length}</strong>your gigs</div><div className="statcard"><strong>{new Set(mineGigs.map(g=>g.artist_name.toLowerCase())).size}</strong>artists</div><div className="statcard"><strong>{new Set(mineGigs.map(g=>g.venue_name.toLowerCase())).size}</strong>venues</div><div className="statcard"><strong>{avg}</strong>average rating</div></div>
- <div className="toolbar"><input className="input" placeholder="Search artist, venue, city or festival…" value={q} onChange={e=>setQ(e.target.value)}/><select className="input compact" value={rating} onChange={e=>setRating(Number(e.target.value))}><option value="0">Any rating</option><option value="5">5 stars</option><option value="4">4+ stars</option><option value="3">3+ stars</option></select><label className="toggle"><input type="checkbox" checked={mine} onChange={e=>setMine(e.target.checked)}/> Mine only</label></div>
- {loading?<Loading/>:shown.length?<div className="grid">{shown.map(g=><GigCard key={g.id} gig={g}/>)}</div>:<EmptyState title="No stubs found" body={q||mine||rating?'Try changing your filters.':'Your archive is waiting for its first memory.'} href={!q&&!mine&&!rating?'/gigs/new':undefined} label="Log your first gig"/>}
- </main></AuthGuard>}
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { CalendarPlus, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Nav } from '@/components/Nav';
+import { AuthGuard } from '@/components/AuthGuard';
+import { GigCard } from '@/components/GigCard';
+import { Loading } from '@/components/Loading';
+import { EmptyState } from '@/components/EmptyState';
+import { supabase } from '@/lib/supabase';
+import type { Gig } from '@/lib/types';
+
+type SortMode = 'newest' | 'oldest' | 'highest';
+
+export default function Home() {
+  const [gigs, setGigs] = useState<Gig[]>([]);
+  const [query, setQuery] = useState('');
+  const [mineOnly, setMineOnly] = useState(false);
+  const [minimumRating, setMinimumRating] = useState(0);
+  const [eventType, setEventType] = useState('all');
+  const [sort, setSort] = useState<SortMode>('newest');
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState('');
+
+  useEffect(() => {
+    async function loadArchive() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      setUserId(user?.id || '');
+
+      const { data } = await supabase
+        .from('gigs')
+        .select('*, profiles(username,display_name,avatar_url), review_likes(user_id), comments(id)')
+        .order('event_date', { ascending: false });
+
+      setGigs((data || []) as Gig[]);
+      setLoading(false);
+    }
+
+    void loadArchive();
+  }, []);
+
+  const myGigs = useMemo(() => gigs.filter((gig) => gig.user_id === userId), [gigs, userId]);
+
+  const shown = useMemo(() => {
+    const filtered = gigs.filter((gig) => {
+      const haystack = [
+        gig.artist_name,
+        gig.venue_name,
+        gig.festival_name || '',
+        gig.city || '',
+        gig.country || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return (
+        haystack.includes(query.trim().toLowerCase()) &&
+        (!mineOnly || gig.user_id === userId) &&
+        (!minimumRating || gig.overall_rating >= minimumRating) &&
+        (eventType === 'all' || gig.event_type === eventType)
+      );
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sort === 'highest') return b.overall_rating - a.overall_rating;
+      if (sort === 'oldest') return a.event_date.localeCompare(b.event_date);
+      return b.event_date.localeCompare(a.event_date);
+    });
+  }, [gigs, query, mineOnly, minimumRating, eventType, sort, userId]);
+
+  const average = myGigs.length
+    ? (myGigs.reduce((total, gig) => total + gig.overall_rating, 0) / myGigs.length).toFixed(1)
+    : '—';
+
+  const topArtist = useMemo(() => {
+    const counts = new Map<string, number>();
+    myGigs.forEach((gig) => counts.set(gig.artist_name, (counts.get(gig.artist_name) || 0) + 1));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'Start logging';
+  }, [myGigs]);
+
+  return (
+    <AuthGuard>
+      <Nav />
+      <main className="shell archive-shell">
+        <section className="archive-hero">
+          <div>
+            <div className="eyebrow">// your live-music memory box</div>
+            <h1>
+              THE <span className="accent">ARCHIVE</span>
+            </h1>
+            <p>Every crowd, chorus and questionable venue pint — kept as a ticket you can revisit.</p>
+          </div>
+          <Link className="btn archive-cta" href="/gigs/new">
+            <CalendarPlus size={18} /> Log a gig
+          </Link>
+        </section>
+
+        <section className="archive-dashboard" aria-label="Your archive summary">
+          <div className="archive-stat featured">
+            <span>GIGS LOGGED</span>
+            <strong>{myGigs.length}</strong>
+            <small>Your personal live-music history</small>
+          </div>
+          <div className="archive-stat">
+            <span>ARTISTS</span>
+            <strong>{new Set(myGigs.map((gig) => gig.artist_name.toLowerCase())).size}</strong>
+          </div>
+          <div className="archive-stat">
+            <span>VENUES</span>
+            <strong>{new Set(myGigs.map((gig) => gig.venue_name.toLowerCase())).size}</strong>
+          </div>
+          <div className="archive-stat">
+            <span>AVERAGE</span>
+            <strong>{average}</strong>
+          </div>
+          <div className="archive-stat top-artist">
+            <span>TOP ARTIST</span>
+            <strong>{topArtist}</strong>
+          </div>
+        </section>
+
+        <section className="archive-controls">
+          <div className="archive-search">
+            <Search size={17} />
+            <input
+              aria-label="Search archive"
+              placeholder="Search artist, venue, city or festival…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+
+          <div className="archive-filter-row">
+            <span className="filter-label"><SlidersHorizontal size={15} /> FILTER</span>
+            <select value={eventType} onChange={(event) => setEventType(event.target.value)}>
+              <option value="all">All types</option>
+              <option value="gig">Gigs</option>
+              <option value="festival">Festivals</option>
+              <option value="club-night">Club nights</option>
+              <option value="comedy">Comedy</option>
+              <option value="other">Other</option>
+            </select>
+            <select value={minimumRating} onChange={(event) => setMinimumRating(Number(event.target.value))}>
+              <option value="0">Any rating</option>
+              <option value="5">5 stars</option>
+              <option value="4">4+ stars</option>
+              <option value="3">3+ stars</option>
+            </select>
+            <select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="highest">Highest rated</option>
+            </select>
+            <label className="archive-toggle">
+              <input type="checkbox" checked={mineOnly} onChange={(event) => setMineOnly(event.target.checked)} />
+              Mine only
+            </label>
+          </div>
+        </section>
+
+        <div className="archive-heading">
+          <div>
+            <span className="eyebrow">// ticket collection</span>
+            <h2>{shown.length} {shown.length === 1 ? 'memory' : 'memories'}</h2>
+          </div>
+          <span><Sparkles size={15} /> Tap a ticket to open the full memory</span>
+        </div>
+
+        {loading ? (
+          <Loading />
+        ) : shown.length ? (
+          <div className="ticket-grid">
+            {shown.map((gig) => <GigCard key={gig.id} gig={gig} />)}
+          </div>
+        ) : (
+          <EmptyState
+            title="No stubs found"
+            body={query || mineOnly || minimumRating || eventType !== 'all'
+              ? 'Try changing your filters.'
+              : 'Your archive is waiting for its first memory.'}
+            href={!query && !mineOnly && !minimumRating && eventType === 'all' ? '/gigs/new' : undefined}
+            label="Log your first gig"
+          />
+        )}
+      </main>
+    </AuthGuard>
+  );
+}
