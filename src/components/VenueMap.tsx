@@ -107,28 +107,48 @@ function distanceKm(a: [number, number], b: [number, number]) {
 function makeGraphicPoints(gigs: VenueGig[]): GraphicPoint[] {
   if (!gigs.length) return [];
 
-  const latitudes = gigs.map((gig) => gig.latitude!);
-  const longitudes = gigs.map((gig) => gig.longitude!);
-  const minLatitude = Math.min(...latitudes);
-  const maxLatitude = Math.max(...latitudes);
-  const minLongitude = Math.min(...longitudes);
-  const maxLongitude = Math.max(...longitudes);
-  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.25);
-  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.25);
+  const located = gigs.filter(
+    (gig) => Number.isFinite(gig.latitude) && Number.isFinite(gig.longitude),
+  );
+
+  // Use true geography when at least two stops are located. Otherwise draw a
+  // shareable chronological trail so the graphic never becomes an empty black box.
+  if (located.length >= 2) {
+    const latitudes = located.map((gig) => Number(gig.latitude));
+    const longitudes = located.map((gig) => Number(gig.longitude));
+    const minLatitude = Math.min(...latitudes);
+    const maxLatitude = Math.max(...latitudes);
+    const minLongitude = Math.min(...longitudes);
+    const maxLongitude = Math.max(...longitudes);
+    const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.25);
+    const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.25);
+
+    return gigs.map((gig, index) => {
+      const fallbackProgress = gigs.length === 1 ? 0.5 : index / (gigs.length - 1);
+      const hasCoordinates = Number.isFinite(gig.latitude) && Number.isFinite(gig.longitude);
+      const baseX = hasCoordinates
+        ? GRAPHIC_PADDING_X +
+          ((Number(gig.longitude) - minLongitude) / longitudeSpan) *
+            (GRAPHIC_WIDTH - GRAPHIC_PADDING_X * 2)
+        : GRAPHIC_PADDING_X + fallbackProgress * (GRAPHIC_WIDTH - GRAPHIC_PADDING_X * 2);
+      const baseY = hasCoordinates
+        ? GRAPHIC_PADDING_Y +
+          (1 - (Number(gig.latitude) - minLatitude) / latitudeSpan) *
+            (GRAPHIC_HEIGHT - GRAPHIC_PADDING_Y * 2)
+        : GRAPHIC_HEIGHT / 2 + Math.sin(index * 1.45) * 135;
+      const repeatOffset = index % 3 === 0 ? -6 : index % 3 === 1 ? 0 : 6;
+      return { ...gig, index, x: baseX + repeatOffset, y: baseY + repeatOffset / 2 };
+    });
+  }
 
   return gigs.map((gig, index) => {
-    const baseX =
-      GRAPHIC_PADDING_X +
-      ((gig.longitude! - minLongitude) / longitudeSpan) *
-        (GRAPHIC_WIDTH - GRAPHIC_PADDING_X * 2);
-    const baseY =
-      GRAPHIC_PADDING_Y +
-      (1 - (gig.latitude! - minLatitude) / latitudeSpan) *
-        (GRAPHIC_HEIGHT - GRAPHIC_PADDING_Y * 2);
-
-    // A tiny deterministic offset keeps repeated visits visible as separate stops.
-    const repeatOffset = index % 3 === 0 ? -6 : index % 3 === 1 ? 0 : 6;
-    return { ...gig, index, x: baseX + repeatOffset, y: baseY + repeatOffset / 2 };
+    const progress = gigs.length === 1 ? 0.5 : index / (gigs.length - 1);
+    return {
+      ...gig,
+      index,
+      x: GRAPHIC_PADDING_X + progress * (GRAPHIC_WIDTH - GRAPHIC_PADDING_X * 2),
+      y: GRAPHIC_HEIGHT / 2 + Math.sin(index * 1.35) * 145 + Math.cos(index * 0.72) * 36,
+    };
   });
 }
 
@@ -183,10 +203,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   }, [filtered]);
 
   const journey = useMemo(
-    () =>
-      [...filtered]
-        .filter((gig) => gig.latitude != null && gig.longitude != null)
-        .sort((a, b) => a.event_date.localeCompare(b.event_date)),
+    () => [...filtered].sort((a, b) => a.event_date.localeCompare(b.event_date)),
     [filtered],
   );
 
@@ -371,9 +388,9 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
           >
             <defs>
               <linearGradient id="journeyGlow" x1="0" x2="1">
-                <stop offset="0%" stopColor="var(--acid)" />
-                <stop offset="42%" stopColor="var(--pink)" />
-                <stop offset="100%" stopColor="#ff4d5f" />
+                <stop offset="0%" stopColor="#ff7ac8" />
+                <stop offset="45%" stopColor="#ff2f92" />
+                <stop offset="100%" stopColor="#ff5a72" />
               </linearGradient>
               <filter id="routeGlow" x="-30%" y="-30%" width="160%" height="160%">
                 <feGaussianBlur stdDeviation="5" result="blur" />
