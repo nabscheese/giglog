@@ -19,6 +19,7 @@ export type Gig = {
   artist_name: string;
   venue_name: string;
   festival_name: string | null;
+  festival_artists?: { name: string; seen: boolean; setlist?: string; setlistUrl?: string }[] | null;
   event_date: string;
   event_type?: 'gig' | 'festival' | 'club-night' | 'comedy' | 'other';
   city?: string | null;

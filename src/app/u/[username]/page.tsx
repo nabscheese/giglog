@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ExternalLink, Instagram, MapPin, Music2 } from 'lucide-react';
+import { ExternalLink, Instagram, MapPin, Music2, Pencil } from 'lucide-react';
 import { Nav } from '@/components/Nav';
 import { AuthGuard } from '@/components/AuthGuard';
 import { FollowButton } from '@/components/FollowButton';
@@ -18,11 +19,15 @@ export default function PublicProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [counts, setCounts] = useState({ followers: 0, following: 0 });
+  const [viewerId, setViewerId] = useState('');
 
   useEffect(() => {
     async function loadProfile() {
       setLoading(true);
       setError('');
+
+      const { data: authData } = await supabase.auth.getUser();
+      setViewerId(authData.user?.id || '');
 
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
@@ -176,7 +181,13 @@ export default function PublicProfile() {
               </div>
             </div>
 
-            <FollowButton profileId={profile.id} />
+            {viewerId === profile.id ? (
+              <Link className="btn" href="/profile">
+                <Pencil size={15} /> Edit profile
+              </Link>
+            ) : (
+              <FollowButton profileId={profile.id} />
+            )}
           </div>
         </section>
 

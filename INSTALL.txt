@@ -1,0 +1,28 @@
+GIGLOG — GIG JOURNEY + VENUE PINS
+
+Copy these files into your project and allow replacement:
+
+src/components/VenueMap.tsx
+src/app/profile/page.tsx
+src/app/globals.css
+src/app/api/geocode/route.ts
+supabase/migrations/20260802_venue_coordinates.sql
+
+SUPABASE SQL (run once):
+
+alter table public.gigs
+add column if not exists latitude double precision,
+add column if not exists longitude double precision;
+
+notify pgrst, 'reload schema';
+
+Then run:
+
+npm run build
+npm run dev
+
+The Profile page has two map modes:
+- Journey route: connects each gig chronologically in a Strava-style red route.
+- Venue pins: groups repeat visits and shows a count on each venue pin.
+
+Filters: Month, Year, All time.

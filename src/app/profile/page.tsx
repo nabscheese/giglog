@@ -6,8 +6,21 @@ import { ExternalLink, ImagePlus, Save, UserRound } from 'lucide-react';
 import { Nav } from '@/components/Nav';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Loading } from '@/components/Loading';
+import { VenueMap } from '@/components/VenueMap';
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/lib/types';
+
+type VenueGig = {
+  id: string;
+  artist_name: string;
+  venue_name: string;
+  city: string | null;
+  country: string | null;
+  event_date: string;
+  overall_rating: number;
+  latitude: number | null;
+  longitude: number | null;
+};
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Partial<Profile>>({});
@@ -16,6 +29,7 @@ export default function ProfilePage() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [venueGigs, setVenueGigs] = useState<VenueGig[]>([]);
 
   useEffect(() => {
     async function loadProfile() {
@@ -30,16 +44,24 @@ export default function ProfilePage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
+      const [{ data, error }, { data: gigsData, error: gigsError }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('gigs')
+          .select('id,artist_name,venue_name,city,country,event_date,overall_rating,latitude,longitude')
+          .eq('user_id', user.id)
+          .order('event_date', { ascending: true }),
+      ]);
 
-      if (error) {
-        setMessage(error.message);
+      if (error || gigsError) {
+        setMessage(error?.message || gigsError?.message || 'Could not load your profile.');
       }
 
+      setVenueGigs((gigsData || []) as VenueGig[]);
       setProfile(
         data || {
           id: user.id,
@@ -164,6 +186,7 @@ export default function ProfilePage() {
     profile.username ||
     '?'
   )[0]?.toUpperCase();
+
 
   return (
     <AuthGuard>
@@ -421,6 +444,21 @@ export default function ProfilePage() {
               </p>
             ) : null}
 
+            <section className="profile-import-card">
+              <div>
+                <span className="eyebrow">// bring your history with you</span>
+                <h3>Import concert history</h3>
+                <p>
+                  Upload a Concert Archives CSV and bring your previous gigs,
+                  festivals and setlists into GigLog.
+                </p>
+              </div>
+
+              <Link className="ghost" href="/import">
+                Import CSV
+              </Link>
+            </section>
+
             <button
               className="btn"
               type="submit"
@@ -433,6 +471,8 @@ export default function ProfilePage() {
             </button>
           </section>
         </form>
+
+        <VenueMap gigs={venueGigs} />
       </main>
     </AuthGuard>
   );

@@ -39,6 +39,7 @@ alter table public.gigs add column if not exists country text;
 alter table public.gigs add column if not exists ticket_url text;
 alter table public.gigs add column if not exists photo_urls text[] default '{}';
 alter table public.gigs add column if not exists is_public boolean not null default true;
+alter table public.gigs add column if not exists festival_artists jsonb not null default '[]'::jsonb;
 alter table public.gigs add column if not exists updated_at timestamptz not null default now();
 
 do $$ begin
