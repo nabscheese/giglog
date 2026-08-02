@@ -5,6 +5,10 @@ export type Profile = {
   bio: string | null;
   home_city: string | null;
   avatar_url: string | null;
+  cover_url?: string | null;
+  website?: string | null;
+  instagram?: string | null;
+  spotify_url?: string | null;
   favourite_genres?: string[] | null;
   created_at?: string;
 };
