@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Award, ExternalLink, Instagram, MapPin, Music2, Pencil } from 'lucide-react';
 import { Nav } from '@/components/Nav';
-import { AuthGuard } from '@/components/AuthGuard';
 import { FollowButton } from '@/components/FollowButton';
 import { GigCard } from '@/components/GigCard';
 import { Loading } from '@/components/Loading';
@@ -108,11 +107,11 @@ export default function PublicProfile() {
   }
 
   if (loading) {
-    return <AuthGuard><Nav /><main className="shell"><Loading label="Opening the profile…" /></main></AuthGuard>;
+    return <><Nav /><main className="shell"><Loading label="Opening the profile…" /></main></>;
   }
 
   if (!profile) {
-    return <AuthGuard><Nav /><main className="shell"><div className="empty">{error || 'Profile not found.'}</div></main></AuthGuard>;
+    return <><Nav /><main className="shell"><div className="empty">{error || 'Profile not found.'}</div></main></>;
   }
 
   const displayName = profile.display_name || profile.username;
@@ -120,7 +119,7 @@ export default function PublicProfile() {
   const mapGigs = isOwner ? gigs : publicGigs;
 
   return (
-    <AuthGuard>
+    <>
       <Nav />
       <main className="shell public-profile-shell">
         <section
@@ -215,6 +214,6 @@ export default function PublicProfile() {
           )}
         </section>
       </main>
-    </AuthGuard>
+    </>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Map as MapIcon, MapPin, RefreshCw, Route, Sparkles } from 'lucide-react';
+import { LocateFixed, Map as MapIcon, MapPin, RefreshCw, Route, Sparkles } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 type Range = 'month' | 'year' | 'all';
@@ -22,12 +22,19 @@ type LeafletMap = {
   remove: () => void;
   fitBounds: (bounds: unknown, options?: unknown) => void;
   setView: (coords: [number, number], zoom: number) => void;
+  flyTo: (coords: [number, number], zoom: number, options?: unknown) => void;
 };
 
 type GraphicPoint = VenueGig & {
   x: number;
   y: number;
   index: number;
+};
+
+type JourneyViewport = {
+  x: number;
+  y: number;
+  scale: number;
 };
 
 declare global {
@@ -173,16 +180,72 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const mapNode = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
   const [range, setRange] = useState<Range>('all');
+  const [selectedCity, setSelectedCity] = useState('all');
   const [resolvedGigs, setResolvedGigs] = useState(gigs);
   const [status, setStatus] = useState('');
   const [geocoding, setGeocoding] = useState(false);
   const [activeStop, setActiveStop] = useState<number | null>(null);
+  const journeySvg = useRef<SVGSVGElement | null>(null);
+  const journeyPanLayer = useRef<SVGGElement | null>(null);
+  const journeyViewportRef = useRef<JourneyViewport>({ x: 0, y: 0, scale: 1 });
+  const animationFrame = useRef<number | null>(null);
+  const wheelCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragState = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; scale: number } | null>(null);
+  const dragMoved = useRef(false);
+  const [journeyViewport, setJourneyViewport] = useState<JourneyViewport>({ x: 0, y: 0, scale: 1 });
+  const [draggingJourney, setDraggingJourney] = useState(false);
+  const [showVenueNames, setShowVenueNames] = useState(true);
 
   useEffect(() => setResolvedGigs(gigs), [gigs]);
 
-  const filtered = useMemo(
+  useEffect(() => {
+    const stored = window.localStorage.getItem('giglog-show-venue-names');
+    if (stored !== null) setShowVenueNames(stored === 'true');
+    return () => {
+      if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current);
+      if (wheelCommitTimer.current) clearTimeout(wheelCommitTimer.current);
+    };
+  }, []);
+
+  function applyJourneyTransform(next: JourneyViewport, commit = false) {
+    journeyViewportRef.current = next;
+    if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current);
+    animationFrame.current = requestAnimationFrame(() => {
+      journeyPanLayer.current?.setAttribute(
+        'transform',
+        `translate(${next.x} ${next.y}) scale(${next.scale})`,
+      );
+      animationFrame.current = null;
+    });
+    if (commit) setJourneyViewport(next);
+  }
+
+  const rangeFiltered = useMemo(
     () => resolvedGigs.filter((gig) => inRange(gig.event_date, range)),
     [resolvedGigs, range],
+  );
+
+  const cityOptions = useMemo(() => {
+    const cityMap = new Map<string, string>();
+    rangeFiltered.forEach((gig) => {
+      const city = gig.city?.trim();
+      if (city) cityMap.set(city.toLowerCase(), city);
+    });
+    return [...cityMap.values()].sort((a, b) => a.localeCompare(b));
+  }, [rangeFiltered]);
+
+  useEffect(() => {
+    if (selectedCity !== 'all' && !cityOptions.some((city) => city === selectedCity)) {
+      setSelectedCity('all');
+    }
+  }, [cityOptions, selectedCity]);
+
+  const filtered = useMemo(
+    () =>
+      rangeFiltered.filter(
+        (gig) => selectedCity === 'all' || gig.city?.trim() === selectedCity,
+      ),
+    [rangeFiltered, selectedCity],
   );
 
   const venues = useMemo(() => {
@@ -211,11 +274,14 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const graphicPath = useMemo(() => smoothPath(graphicPoints), [graphicPoints]);
 
   const routeDistance = useMemo(() => {
+    const locatedJourney = journey.filter(
+      (gig) => Number.isFinite(gig.latitude) && Number.isFinite(gig.longitude),
+    );
     let total = 0;
-    for (let index = 1; index < journey.length; index += 1) {
+    for (let index = 1; index < locatedJourney.length; index += 1) {
       total += distanceKm(
-        [journey[index - 1].latitude!, journey[index - 1].longitude!],
-        [journey[index].latitude!, journey[index].longitude!],
+        [Number(locatedJourney[index - 1].latitude), Number(locatedJourney[index - 1].longitude)],
+        [Number(locatedJourney[index].latitude), Number(locatedJourney[index].longitude)],
       );
     }
     return Math.round(total);
@@ -328,9 +394,22 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
             L.marker(coords, { icon }).addTo(map).bindPopup(popup);
           });
 
-        if (bounds.length > 1) map.fitBounds(bounds, { padding: [38, 38], maxZoom: 12 });
-        else if (bounds.length === 1) map.setView(bounds[0], 13);
-        else map.setView([54.5, -3.2], 5);
+        if (selectedCity !== 'all' && bounds.length) {
+          const centre: [number, number] = [
+            bounds.reduce((total, point) => total + point[0], 0) / bounds.length,
+            bounds.reduce((total, point) => total + point[1], 0) / bounds.length,
+          ];
+          map.setView([54.5, -3.2], 5);
+          window.setTimeout(() => {
+            if (!cancelled) map.flyTo(centre, bounds.length === 1 ? 13 : 11, { duration: 1.25 });
+          }, 120);
+        } else if (bounds.length > 1) {
+          map.fitBounds(bounds, { padding: [38, 38], maxZoom: 12 });
+        } else if (bounds.length === 1) {
+          map.setView(bounds[0], 13);
+        } else {
+          map.setView([54.5, -3.2], 5);
+        }
       })
       .catch(() => setStatus('Your venue map could not be loaded.'));
 
@@ -339,11 +418,77 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
       mapInstance.current?.remove();
       mapInstance.current = null;
     };
-  }, [venues]);
+  }, [venues, selectedCity]);
 
   const locatedCount = venues.filter((venue) => venue.latitude != null).length;
   const cities = new Set(filtered.map((gig) => gig.city?.trim()).filter(Boolean)).size;
   const selectedStop = activeStop == null ? null : graphicPoints[activeStop] || null;
+
+  function resetJourneyView() {
+    const reset = { x: 0, y: 0, scale: 1 };
+    applyJourneyTransform(reset, true);
+    setDraggingJourney(false);
+    dragState.current = null;
+  }
+
+  function handleJourneyPointerDown(event: React.PointerEvent<SVGSVGElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const current = journeyViewportRef.current;
+    dragState.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: current.x,
+      originY: current.y,
+      scale: current.scale,
+    };
+    dragMoved.current = false;
+    setDraggingJourney(true);
+  }
+
+  function handleJourneyPointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    const drag = dragState.current;
+    if (!drag || drag.pointerId !== event.pointerId || !journeySvg.current) return;
+    const rect = journeySvg.current.getBoundingClientRect();
+    const dx = ((event.clientX - drag.startX) / rect.width) * GRAPHIC_WIDTH;
+    const dy = ((event.clientY - drag.startY) / rect.height) * GRAPHIC_HEIGHT;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved.current = true;
+    applyJourneyTransform({
+      scale: drag.scale,
+      x: drag.originX + dx / drag.scale,
+      y: drag.originY + dy / drag.scale,
+    });
+  }
+
+  function finishJourneyDrag(event: React.PointerEvent<SVGSVGElement>) {
+    if (dragState.current?.pointerId === event.pointerId) {
+      dragState.current = null;
+      setDraggingJourney(false);
+      setJourneyViewport(journeyViewportRef.current);
+      try { event.currentTarget.releasePointerCapture(event.pointerId); } catch {}
+    }
+  }
+
+  function handleJourneyWheel(event: React.WheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+    if (!journeySvg.current) return;
+    const rect = journeySvg.current.getBoundingClientRect();
+    const cursorX = ((event.clientX - rect.left) / rect.width) * GRAPHIC_WIDTH;
+    const cursorY = ((event.clientY - rect.top) / rect.height) * GRAPHIC_HEIGHT;
+    const current = journeyViewportRef.current;
+    const nextScale = Math.min(3.5, Math.max(0.75, current.scale * (event.deltaY < 0 ? 1.1 : 0.91)));
+    const worldX = cursorX / current.scale - current.x;
+    const worldY = cursorY / current.scale - current.y;
+    const next = {
+      scale: nextScale,
+      x: cursorX / nextScale - worldX,
+      y: cursorY / nextScale - worldY,
+    };
+    applyJourneyTransform(next);
+    if (wheelCommitTimer.current) clearTimeout(wheelCommitTimer.current);
+    wheelCommitTimer.current = setTimeout(() => setJourneyViewport(journeyViewportRef.current), 100);
+  }
 
   return (
     <section className="panel venue-map-panel" aria-labelledby="venue-map-title">
@@ -362,12 +507,66 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
               onClick={() => {
                 setRange(value);
                 setActiveStop(null);
+                resetJourneyView();
               }}
             >
               {value === 'all' ? 'All time' : value === 'year' ? 'This year' : 'This month'}
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="journey-city-controls" aria-label="Filter gig journey by city">
+        <div className="journey-city-control-copy">
+          <MapPin size={16} />
+          <span>Move journey to</span>
+        </div>
+        <div className="journey-city-chips">
+          <button
+            type="button"
+            className={selectedCity === 'all' ? 'active' : ''}
+            onClick={() => {
+              setSelectedCity('all');
+              setActiveStop(null);
+              resetJourneyView();
+            }}
+          >
+            All cities
+          </button>
+          {cityOptions.map((city) => (
+            <button
+              key={city}
+              type="button"
+              className={selectedCity === city ? 'active' : ''}
+              onClick={() => {
+                setSelectedCity(city);
+                setActiveStop(null);
+                resetJourneyView();
+              }}
+            >
+              {city}
+            </button>
+          ))}
+        </div>
+        {selectedCity !== 'all' ? (
+          <button
+            className="journey-reset-view"
+            type="button"
+            onClick={() => {
+              setSelectedCity('all');
+              setActiveStop(null);
+              resetJourneyView();
+            }}
+          >
+            <LocateFixed size={14} /> Reset view
+          </button>
+        ) : null}
+      </div>
+
+      <div className="journey-city-summary">
+        <span>{selectedCity === 'all' ? 'Full journey' : `${selectedCity} journey`}</span>
+        <strong>{filtered.length} {filtered.length === 1 ? 'gig' : 'gigs'}</strong>
+        <small>{selectedCity === 'all' ? `${cities} cities in view` : `${venues.length} ${venues.length === 1 ? 'venue' : 'venues'} in view`}</small>
       </div>
 
       <div className="venue-map-stats">
@@ -379,12 +578,37 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
 
       <div className="gig-journey-graphic-wrap">
         <div className="gig-journey-graphic-label"><Sparkles size={14} /> Your live-music trail</div>
+        <div className="journey-pan-controls">
+          <span>{draggingJourney ? 'Moving trail…' : 'Drag to move · scroll to zoom'}</span>
+          <label className="journey-label-toggle">
+            <input
+              type="checkbox"
+              checked={showVenueNames}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setShowVenueNames(next);
+                window.localStorage.setItem('giglog-show-venue-names', String(next));
+              }}
+            />
+            Venue names
+          </label>
+          <button type="button" onClick={resetJourneyView} disabled={journeyViewport.scale === 1 && journeyViewport.x === 0 && journeyViewport.y === 0}>
+            <LocateFixed size={13} /> Centre trail
+          </button>
+        </div>
         {graphicPoints.length ? (
           <svg
-            className="gig-journey-graphic"
+            ref={journeySvg}
+            className={`gig-journey-graphic ${draggingJourney ? 'dragging' : ''}`}
             viewBox={`0 0 ${GRAPHIC_WIDTH} ${GRAPHIC_HEIGHT}`}
             role="img"
-            aria-label={`Graphic route connecting ${graphicPoints.length} gigs across ${venues.length} venues`}
+            aria-label={`Interactive graphic route connecting ${graphicPoints.length} gigs across ${venues.length} venues`}
+            onPointerDown={handleJourneyPointerDown}
+            onPointerMove={handleJourneyPointerMove}
+            onPointerUp={finishJourneyDrag}
+            onPointerCancel={finishJourneyDrag}
+            onPointerLeave={(event) => { if (draggingJourney) finishJourneyDrag(event); }}
+            onWheel={handleJourneyWheel}
           >
             <defs>
               <linearGradient id="journeyGlow" x1="0" x2="1">
@@ -399,6 +623,9 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
             </defs>
 
             <rect className="journey-graphic-bg" width={GRAPHIC_WIDTH} height={GRAPHIC_HEIGHT} rx="18" />
+            <g ref={journeyPanLayer} className="journey-pan-layer" transform={`translate(${journeyViewport.x} ${journeyViewport.y}) scale(${journeyViewport.scale})`}>
+            <rect className="journey-graphic-interaction-bg" width={GRAPHIC_WIDTH} height={GRAPHIC_HEIGHT} rx="18" />
+            
             <path className="journey-contour journey-contour-one" d="M -20 130 C 190 20, 360 240, 560 110 S 870 110, 1040 30" />
             <path className="journey-contour journey-contour-two" d="M -40 400 C 170 250, 340 520, 570 350 S 830 450, 1060 260" />
             <path className="journey-contour journey-contour-three" d="M 100 -20 C 250 160, 260 330, 80 590" />
@@ -416,14 +643,17 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
                   key={`${point.id}-${index}`}
                   className={`journey-stop ${isActive ? 'active' : ''}`}
                   transform={`translate(${point.x} ${point.y})`}
-                  onClick={() => setActiveStop(isActive ? null : index)}
+                  onClick={() => {
+                    if (dragMoved.current) { dragMoved.current = false; return; }
+                    setActiveStop(isActive ? null : index);
+                  }}
                   role="button"
                   aria-label={`${point.artist_name} at ${point.venue_name}`}
                 >
                   <circle className="journey-stop-ring" r={isFirst || isLast ? 16 : 12} />
                   <circle className="journey-stop-dot" r={isFirst || isLast ? 8 : 6} />
                   <text className="journey-stop-number" y="3">{isFirst ? 'S' : isLast ? '★' : index + 1}</text>
-                  {showLabel ? (
+                  {showVenueNames && showLabel ? (
                     <g className="journey-stop-label" transform={`translate(0 ${labelAbove ? -31 : 38})`}>
                       <rect x="-78" y="-17" width="156" height="34" rx="5" />
                       <text y="-2">{point.venue_name.slice(0, 24)}</text>
@@ -433,6 +663,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
                 </g>
               );
             })}
+            </g>
           </svg>
         ) : (
           <div className="journey-graphic-empty">
@@ -458,7 +689,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
           <span className="eyebrow">// explore the real places</span>
           <h3><MapPin size={20} /> Venue map</h3>
         </div>
-        <p>Drag to move, pinch or scroll to zoom, then tap a venue pin.</p>
+        <p>{selectedCity === 'all' ? 'Choose a city above or explore the full route.' : `Map moved to ${selectedCity}. Drag, zoom or tap a venue pin.`}</p>
       </div>
 
       <div className="journey-map-frame">

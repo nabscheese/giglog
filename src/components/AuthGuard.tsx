@@ -1,11 +1,17 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 
-export function AuthGuard({children}:{children:React.ReactNode}){
- const [ready,setReady]=useState(false); const router=useRouter();
- useEffect(()=>{supabase.auth.getSession().then(({data})=>{if(!data.session) router.replace('/auth'); else setReady(true)});},[router]);
- if(!ready) return <main className="center"><div className="loader">checking your wristband…</div></main>;
- return <>{children}</>;
+import { LockKeyhole } from 'lucide-react';
+import { Nav } from '@/components/Nav';
+import { useAuth } from '@/components/AuthProvider';
+
+export function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { user, loading, openAuth } = useAuth();
+  if (loading) return <main className="center"><div className="loader">checking your wristband…</div></main>;
+  if (!user) {
+    return <>
+      <Nav />
+      <main className="shell"><section className="private-gate panel"><LockKeyhole size={30} /><div><div className="eyebrow">// members area</div><h1>YOUR WRISTBAND, PLEASE</h1><p>Log in or join GigLog to open this part of the venue.</p><div className="button-row"><button className="btn" onClick={() => openAuth('up')}>Join GigLog</button><button className="ghost" onClick={() => openAuth('in')}>Log in</button></div></div></section></main>
+    </>;
+  }
+  return <>{children}</>;
 }

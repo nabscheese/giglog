@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
+  BadgeCheck,
   CalendarPlus,
   Camera,
   MapPin,
@@ -138,7 +139,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="dashboard-profile-card">
+          <div className={`dashboard-profile-card${profilePercent === 100 ? ' complete' : ''}`}>
             <div className="dashboard-profile-top">
               {profile?.avatar_url ? (
                 <img src={profile.avatar_url} alt="" />
@@ -146,13 +147,28 @@ export default function DashboardPage() {
                 <div className="dashboard-avatar-fallback">{firstName[0]?.toUpperCase()}</div>
               )}
               <div>
-                <span>PROFILE COMPLETION</span>
-                <strong>{profilePercent}%</strong>
+                <span>{profilePercent === 100 ? 'PROFILE LIVE' : 'PROFILE COMPLETION'}</span>
+                <strong>{profilePercent === 100 ? 'ALL SET' : `${profilePercent}%`}</strong>
               </div>
+              {profilePercent === 100 ? <BadgeCheck className="dashboard-profile-check" size={32} /> : null}
             </div>
-            <div className="dashboard-progress"><span style={{ width: `${profilePercent}%` }} /></div>
-            <p>{profilePercent === 100 ? 'Your profile is ready for the crowd.' : 'Add a cover, bio, city and genres to finish your profile.'}</p>
-            <Link href="/profile">Edit profile <ArrowRight size={14} /></Link>
+            {profilePercent === 100 ? (
+              <div className="dashboard-profile-complete-line" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : (
+              <div className="dashboard-progress"><span style={{ width: `${profilePercent}%` }} /></div>
+            )}
+            <p>
+              {profilePercent === 100
+                ? 'Your profile is live. Share it with the crowd or give it a fresh look.'
+                : 'Add a cover, bio, city and genres to finish your profile.'}
+            </p>
+            <Link href={profilePercent === 100 && profile?.username ? `/u/${profile.username}` : '/profile'}>
+              {profilePercent === 100 ? 'View public profile' : 'Edit profile'} <ArrowRight size={14} />
+            </Link>
           </div>
         </section>
 
@@ -187,7 +203,7 @@ export default function DashboardPage() {
             <div className="section-heading"><div><span className="eyebrow">// quick access</span><h2>Backstage pass</h2></div></div>
             <Link href="/discover"><Sparkles size={18} /><span><strong>Discover shows</strong><small>Find something new nearby</small></span><ArrowRight size={16} /></Link>
             <Link href="/people"><Users size={18} /><span><strong>Find people</strong><small>Follow friends and gig fans</small></span><ArrowRight size={16} /></Link>
-            <Link href="/profile"><Camera size={18} /><span><strong>Finish your profile</strong><small>Add your cover and favourites</small></span><ArrowRight size={16} /></Link>
+            <Link href={profilePercent === 100 && profile?.username ? `/u/${profile.username}` : '/profile'}><Camera size={18} /><span><strong>{profilePercent === 100 ? 'Share your profile' : 'Finish your profile'}</strong><small>{profilePercent === 100 ? 'See your public page' : 'Add your cover and favourites'}</small></span><ArrowRight size={16} /></Link>
           </article>
         </section>
 
