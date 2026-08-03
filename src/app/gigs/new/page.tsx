@@ -21,7 +21,8 @@ type GigSearchEvent = {
   ticketUrl: string | null;
   image: string | null;
   festival: string | null;
-  source?: 'setlistfm' | 'ticketmaster';
+  lineup?: string[];
+  source?: 'setlistfm' | 'ticketmaster' | 'giglog';
   sourceId?: string;
   setlist?: string;
   songs?: string[];
@@ -30,6 +31,19 @@ type GigSearchEvent = {
   topTracks?: { name: string; url: string | null }[];
   lastfmUrl?: string | null;
 };
+
+type SearchMode = 'gig' | 'festival';
+
+const popularFestivals: GigSearchEvent[] = [
+  { id: 'catalogue-glastonbury', name: 'Glastonbury Festival', artist: 'Glastonbury Festival', venue: 'Worthy Farm', city: 'Pilton', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Glastonbury Festival', source: 'giglog' },
+  { id: 'catalogue-download', name: 'Download Festival', artist: 'Download Festival', venue: 'Donington Park', city: 'Derby', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Download Festival', source: 'giglog' },
+  { id: 'catalogue-slam-dunk', name: 'Slam Dunk Festival', artist: 'Slam Dunk Festival', venue: '', city: '', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Slam Dunk Festival', source: 'giglog' },
+  { id: 'catalogue-reading', name: 'Reading Festival', artist: 'Reading Festival', venue: 'Richfield Avenue', city: 'Reading', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Reading Festival', source: 'giglog' },
+  { id: 'catalogue-leeds', name: 'Leeds Festival', artist: 'Leeds Festival', venue: 'Bramham Park', city: 'Leeds', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Leeds Festival', source: 'giglog' },
+  { id: 'catalogue-trnsmt', name: 'TRNSMT Festival', artist: 'TRNSMT Festival', venue: 'Glasgow Green', city: 'Glasgow', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'TRNSMT Festival', source: 'giglog' },
+  { id: 'catalogue-latitude', name: 'Latitude Festival', artist: 'Latitude Festival', venue: 'Henham Park', city: 'Southwold', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Latitude Festival', source: 'giglog' },
+  { id: 'catalogue-creamfields', name: 'Creamfields', artist: 'Creamfields', venue: 'Daresbury Estate', city: 'Warrington', country: 'United Kingdom', countryCode: 'GB', date: '', time: null, ticketUrl: null, image: null, festival: 'Creamfields', source: 'giglog' },
+];
 
 type FestivalArtist = {
   name: string;
@@ -62,6 +76,7 @@ function NewGigForm() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [searchMode, setSearchMode] = useState<SearchMode>('gig');
   const [searchTerm, setSearchTerm] = useState(
     searchParams.get('artist') || '',
   );
@@ -88,6 +103,9 @@ function NewGigForm() {
   const [festival, setFestival] = useState('');
   const [festivalArtists, setFestivalArtists] = useState<FestivalArtist[]>([]);
   const [lineupInput, setLineupInput] = useState('');
+  const [lineupLoading, setLineupLoading] = useState(false);
+  const [lineupMessage, setLineupMessage] = useState('');
+  const [lineupSearch, setLineupSearch] = useState('');
   const [ticketUrl, setTicketUrl] = useState(
     searchParams.get('ticketUrl') || '',
   );
@@ -119,102 +137,108 @@ function NewGigForm() {
     setSearchError('');
     setEvents([]);
 
-    const setlistParams = new URLSearchParams({
-      mode: 'search',
-      artist: searchTerm.trim(),
-    });
-    if (searchCity.trim()) setlistParams.set('city', searchCity.trim());
-
-    const ticketmasterParams = new URLSearchParams({
-      keyword: searchTerm.trim(),
-    });
-    if (searchCity.trim()) {
-      ticketmasterParams.set('city', searchCity.trim());
-    }
-
     try {
-      const [setlistResponse, ticketmasterResponse] = await Promise.all([
-        fetch(`/api/setlistfm?${setlistParams.toString()}`, {
-          cache: 'no-store',
-        }),
-        fetch(`/api/ticketmaster?${ticketmasterParams.toString()}`, {
-          cache: 'no-store',
-        }),
-      ]);
+      if (searchMode === 'festival') {
+        const query = searchTerm.trim();
+        const ticketmasterParams = new URLSearchParams({
+          keyword: query,
+          mode: 'festival',
+        });
+        if (searchCity.trim()) ticketmasterParams.set('city', searchCity.trim());
 
-      const [setlistBody, ticketmasterBody] = await Promise.all([
-        setlistResponse.json(),
-        ticketmasterResponse.json(),
-      ]);
+        const [ticketmasterResponse, existingFestivals] = await Promise.all([
+          fetch(`/api/ticketmaster?${ticketmasterParams.toString()}`, { cache: 'no-store' }),
+          supabase
+            .from('gigs')
+            .select('festival_name,venue_name,city,country,event_date,ticket_url,photo_urls,festival_artists')
+            .not('festival_name', 'is', null)
+            .ilike('festival_name', `%${query}%`)
+            .limit(15),
+        ]);
 
-      const setlistEvents = setlistResponse.ok && Array.isArray(setlistBody.events)
-        ? setlistBody.events
-        : [];
-
-      const ticketmasterEvents =
-        ticketmasterResponse.ok && Array.isArray(ticketmasterBody.events)
-          ? ticketmasterBody.events.map((event: GigSearchEvent) => ({
-              ...event,
-              source: 'ticketmaster' as const,
-            }))
+        const ticketmasterBody = await ticketmasterResponse.json();
+        const ticketmasterEvents = ticketmasterResponse.ok && Array.isArray(ticketmasterBody.events)
+          ? ticketmasterBody.events.map((event: GigSearchEvent) => ({ ...event, source: 'ticketmaster' as const }))
           : [];
 
+        const databaseEvents: GigSearchEvent[] = (existingFestivals.data || []).map((gig, index) => ({
+          id: `giglog-${index}-${gig.festival_name}`,
+          name: gig.festival_name || '',
+          artist: gig.festival_name || '',
+          venue: gig.venue_name || '',
+          city: gig.city || '',
+          country: gig.country || 'United Kingdom',
+          countryCode: 'GB',
+          date: gig.event_date || '',
+          time: null,
+          ticketUrl: gig.ticket_url || null,
+          image: gig.photo_urls?.[0] || null,
+          festival: gig.festival_name || null,
+          lineup: Array.isArray(gig.festival_artists)
+            ? gig.festival_artists
+                .map((act: unknown) => typeof act === 'string' ? act : (act as { name?: string })?.name || '')
+                .filter(Boolean)
+            : [],
+          source: 'giglog' as const,
+        }));
+
+        const catalogueMatches = popularFestivals.filter((event) =>
+          event.name.toLowerCase().includes(query.toLowerCase()),
+        );
+
+        const combined = [...catalogueMatches, ...databaseEvents, ...ticketmasterEvents];
+        const seen = new Set<string>();
+        const results = combined.filter((event) => {
+          const key = `${event.name.toLowerCase()}|${event.date}|${event.venue.toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+        setEvents(results);
+        if (!results.length) {
+          setSearchError(ticketmasterBody.error || 'No matching festivals found. You can still add it manually.');
+        } else {
+          setSearchError(`${results.length} festival ${results.length === 1 ? 'match' : 'matches'} found.`);
+        }
+        return;
+      }
+
+      const setlistParams = new URLSearchParams({ mode: 'search', artist: searchTerm.trim() });
+      if (searchCity.trim()) setlistParams.set('city', searchCity.trim());
+      const ticketmasterParams = new URLSearchParams({ keyword: searchTerm.trim(), mode: 'gig' });
+      if (searchCity.trim()) ticketmasterParams.set('city', searchCity.trim());
+
+      const [setlistResponse, ticketmasterResponse] = await Promise.all([
+        fetch(`/api/setlistfm?${setlistParams.toString()}`, { cache: 'no-store' }),
+        fetch(`/api/ticketmaster?${ticketmasterParams.toString()}`, { cache: 'no-store' }),
+      ]);
+      const [setlistBody, ticketmasterBody] = await Promise.all([setlistResponse.json(), ticketmasterResponse.json()]);
+      const setlistEvents = setlistResponse.ok && Array.isArray(setlistBody.events) ? setlistBody.events : [];
+      const ticketmasterEvents = ticketmasterResponse.ok && Array.isArray(ticketmasterBody.events)
+        ? ticketmasterBody.events.map((event: GigSearchEvent) => ({ ...event, source: 'ticketmaster' as const })) : [];
       const rawResults = [...setlistEvents, ...ticketmasterEvents];
       const artists = [...new Set(rawResults.map((event) => event.artist).filter(Boolean))].slice(0, 10);
-      const artistDetails = await Promise.all(
-        artists.map(async (artistName) => {
-          try {
-            const response = await fetch(`/api/lastfm?artist=${encodeURIComponent(artistName)}`, {
-              cache: 'no-store',
-            });
-            if (!response.ok) return [artistName, null] as const;
-            return [artistName, await response.json()] as const;
-          } catch {
-            return [artistName, null] as const;
-          }
-        }),
-      );
+      const artistDetails = await Promise.all(artists.map(async (artistName) => {
+        try {
+          const response = await fetch(`/api/lastfm?artist=${encodeURIComponent(artistName)}`, { cache: 'no-store' });
+          if (!response.ok) return [artistName, null] as const;
+          return [artistName, await response.json()] as const;
+        } catch { return [artistName, null] as const; }
+      }));
       const detailsByArtist = new Map(artistDetails);
       const results = rawResults.map((event) => {
         const details = detailsByArtist.get(event.artist);
-        return {
-          ...event,
-          image: event.image || details?.image || null,
-          tags: details?.tags || [],
-          topTracks: details?.topTracks || [],
-          lastfmUrl: details?.url || null,
-        };
+        return { ...event, image: event.image || details?.image || null, tags: details?.tags || [], topTracks: details?.topTracks || [], lastfmUrl: details?.url || null };
       });
       setEvents(results);
-
       if (!results.length) {
-        const setlistError = !setlistResponse.ok ? setlistBody.error : '';
-        const ticketmasterError = !ticketmasterResponse.ok
-          ? ticketmasterBody.error
-          : '';
-
-        setSearchError(
-          setlistError ||
-            ticketmasterError ||
-            'No matching gigs found. Try removing the city or add the details manually.',
-        );
+        setSearchError((!setlistResponse.ok ? setlistBody.error : '') || (!ticketmasterResponse.ok ? ticketmasterBody.error : '') || 'No matching gigs found. Try removing the city or add the details manually.');
       } else {
-        const pastCount = setlistEvents.length;
-        const upcomingCount = ticketmasterEvents.length;
-        setSearchError(
-          `${results.length} found — ${pastCount} past ${
-            pastCount === 1 ? 'gig' : 'gigs'
-          } and ${upcomingCount} upcoming ${
-            upcomingCount === 1 ? 'listing' : 'listings'
-          }.`,
-        );
+        setSearchError(`${results.length} found — ${setlistEvents.length} past ${setlistEvents.length === 1 ? 'gig' : 'gigs'} and ${ticketmasterEvents.length} upcoming ${ticketmasterEvents.length === 1 ? 'listing' : 'listings'}.`);
       }
     } catch (searchFailure) {
-      setSearchError(
-        searchFailure instanceof Error
-          ? searchFailure.message
-          : 'Could not search for gigs.',
-      );
+      setSearchError(searchFailure instanceof Error ? searchFailure.message : 'Could not search.');
     } finally {
       setSearching(false);
     }
@@ -268,22 +292,36 @@ function NewGigForm() {
     }
   }
 
-  function chooseEvent(event: GigSearchEvent) {
+  async function chooseEvent(event: GigSearchEvent) {
     setSelectedEvent(event);
-    setArtist(event.artist);
+    setArtist(event.festival ? '' : event.artist);
     setVenue(event.venue);
     setDate(event.date);
     setCity(event.city);
     setCountry(event.country || 'United Kingdom');
     setFestival(event.festival || '');
-    const initialFestivalArtists = event.festival
-      ? [{ name: event.artist, seen: true, setlist: event.setlist || '', setlistUrl: event.setlistUrl || '' }]
-      : [];
+    const initialFestivalArtists = (event.lineup || []).map((name) => ({
+      name,
+      seen: false,
+      setlist: '',
+      setlistUrl: '',
+    }));
     setFestivalArtists(initialFestivalArtists);
     setLineupInput(initialFestivalArtists.map((act) => act.name).join(', '));
+    setLineupSearch('');
+    setLineupMessage(event.festival && initialFestivalArtists.length
+      ? `${initialFestivalArtists.length} lineup artists found. Tick the artists you saw.`
+      : '');
     setTicketUrl(event.ticketUrl || '');
     setEvents([]);
     setShowManual(false);
+
+    if (event.festival) {
+      await loadFestivalLineup(event);
+      setSetlistState('idle');
+      setSetlistMessage('Choose the artists you saw, then find their setlists.');
+      return;
+    }
 
     if (event.source === 'setlistfm') {
       const automaticSetlist = event.setlist || '';
@@ -300,6 +338,85 @@ function NewGigForm() {
     }
 
     void findSetlist(event);
+  }
+
+  function normaliseArtistNames(values: unknown[]): string[] {
+    const names = values
+      .map((value) => typeof value === 'string' ? value : (value as { name?: string })?.name || '')
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const seen = new Set<string>();
+    return names.filter((name) => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async function loadFestivalLineup(event: GigSearchEvent) {
+    if (!event.festival) return;
+    setLineupLoading(true);
+    setLineupMessage('Finding the festival lineup…');
+
+    const eventArtists = normaliseArtistNames(event.lineup || []);
+    let previousArtists: string[] = [];
+
+    try {
+      let query = supabase
+        .from('gigs')
+        .select('festival_artists,event_date')
+        .ilike('festival_name', event.festival)
+        .not('festival_artists', 'is', null)
+        .limit(25);
+
+      if (event.date) {
+        const year = Number(event.date.slice(0, 4));
+        if (Number.isFinite(year)) {
+          query = query
+            .gte('event_date', `${year}-01-01`)
+            .lte('event_date', `${year}-12-31`);
+        }
+      }
+
+      const { data } = await query;
+      previousArtists = normaliseArtistNames(
+        (data || []).flatMap((row) => Array.isArray(row.festival_artists) ? row.festival_artists : []),
+      );
+    } catch {
+      previousArtists = [];
+    }
+
+    const names = normaliseArtistNames([...eventArtists, ...previousArtists]);
+    const artists = names.map((name) => ({
+      name,
+      seen: false,
+      setlist: '',
+      setlistUrl: '',
+    }));
+
+    setFestivalArtists(artists);
+    setLineupInput(names.join(', '));
+    setLineupLoading(false);
+    setLineupMessage(names.length
+      ? `${names.length} lineup artists found. Tick the artists you actually saw.`
+      : 'A full lineup was not available automatically. Add any missing artists below.');
+  }
+
+  function setAllFestivalArtists(seen: boolean) {
+    setFestivalArtists((current) => current.map((act) => ({ ...act, seen })));
+  }
+
+  function addFestivalArtist() {
+    const name = lineupSearch.trim();
+    if (!name) return;
+    setFestivalArtists((current) => {
+      if (current.some((act) => act.name.toLowerCase() === name.toLowerCase())) return current;
+      const next = [...current, { name, seen: true, setlist: '', setlistUrl: '' }];
+      setLineupInput(next.map((act) => act.name).join(', '));
+      return next;
+    });
+    setLineupSearch('');
   }
 
   function updateFestivalLineup(value: string) {
@@ -462,15 +579,21 @@ ${setlistValue}`);
           <section className="panel event-finder-panel">
             <div className="simple-step-label">1 · Find your gig</div>
 
+            <div className="log-search-mode" role="tablist" aria-label="What are you logging?">
+              <button type="button" className={searchMode === 'gig' ? 'active' : ''} onClick={() => { setSearchMode('gig'); setEvents([]); setSearchError(''); }}>Gig / artist</button>
+              <button type="button" className={searchMode === 'festival' ? 'active' : ''} onClick={() => { setSearchMode('festival'); setEvents([]); setSearchError(''); }}>Festival</button>
+            </div>
+
             <div className="event-search-form">
               <div className="field">
-                <label htmlFor="event-search">Artist or event</label>
+                <label htmlFor="event-search">{searchMode === 'festival' ? 'Festival name' : 'Artist or event'}</label>
                 <input
                   id="event-search"
                   className="input"
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="e.g. Paramore"
+                  onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchGigs(); } }}
+                  placeholder={searchMode === 'festival' ? 'e.g. Glastonbury, Download or Slam Dunk' : 'e.g. Paramore'}
                   autoFocus
                 />
               </div>
@@ -492,7 +615,7 @@ ${setlistValue}`);
                 disabled={!canSearch || searching}
                 onClick={() => void searchGigs()}
               >
-                {searching ? 'Searching…' : 'Search gigs'}
+                {searching ? 'Searching…' : searchMode === 'festival' ? 'Search festivals' : 'Search gigs'}
               </button>
             </div>
 
@@ -509,7 +632,7 @@ ${setlistValue}`);
                     className="event-picker-result"
                     type="button"
                     key={event.id}
-                    onClick={() => chooseEvent(event)}
+                    onClick={() => void chooseEvent(event)}
                   >
                     {event.image ? (
                       <img src={event.image} alt="" />
@@ -519,7 +642,7 @@ ${setlistValue}`);
                     <span>
                       <strong>{event.name}</strong>
                       <em className={`event-source ${event.source || 'ticketmaster'}`}>
-                        {event.source === 'setlistfm' ? 'Past gig · Setlist.fm' : 'Upcoming · Ticketmaster'}
+                        {event.source === 'setlistfm' ? 'Past gig · Setlist.fm' : event.source === 'giglog' ? 'Festival · GigLog' : event.festival ? 'Festival · Ticketmaster' : 'Upcoming · Ticketmaster'}
                       </em>
                       <small>
                         {event.venue || 'Venue TBC'}
@@ -573,10 +696,10 @@ ${setlistValue}`);
                       </span>
                     <h2>{selectedEvent.name}</h2>
                     <p>
-                      {venue} · {city} ·{' '}
-                      {new Date(`${date}T00:00:00`).toLocaleDateString('en-GB', {
-                        dateStyle: 'long',
-                      })}
+                      {venue || 'Venue TBC'}{city ? ` · ${city}` : ''} ·{' '}
+                      {date
+                        ? new Date(`${date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })
+                        : 'Choose the festival date'}
                     </p>
                   </div>
                   <button
@@ -617,7 +740,8 @@ ${setlistValue}`);
                     className="input"
                     value={artist}
                     onChange={(event) => setArtist(event.target.value)}
-                    required
+                    required={!festival.trim()}
+                    placeholder={festival ? 'Optional for festivals' : undefined}
                   />
                 </div>
                 <div className="field">
@@ -677,34 +801,75 @@ ${setlistValue}`);
                       <label htmlFor="festival-name">Festival name</label>
                       <input id="festival-name" className="input" value={festival} onChange={(event) => setFestival(event.target.value)} />
                     </div>
-                    <div className="field">
-                      <label htmlFor="festival-lineup">Festival lineup</label>
-                      <input
-                        id="festival-lineup"
-                        className="input"
-                        value={lineupInput}
-                        onChange={(event) => updateFestivalLineup(event.target.value)}
-                        placeholder="Neck Deep, Hot Mulligan, The Wonder Years"
-                      />
-                      <small className="meta">Add the lineup separated by commas, then tick only the artists you actually saw.</small>
-                    </div>
-                    {festivalArtists.length ? (
-                      <div className="festival-seen-picker">
-                        <strong>Who did you see?</strong>
+                    <div className="festival-lineup-builder">
+                      <div className="festival-lineup-heading">
                         <div>
-                          {festivalArtists.map((act) => (
-                            <label key={act.name}>
-                              <input
-                                type="checkbox"
-                                checked={act.seen}
-                                onChange={(event) => setFestivalArtists((current) => current.map((item) => item.name === act.name ? { ...item, seen: event.target.checked } : item))}
-                              />
-                              {act.name}
-                            </label>
-                          ))}
+                          <strong>Who did you see?</strong>
+                          <small className="meta">The lineup is filled automatically when available. Untick anyone you missed.</small>
+                        </div>
+                        <span className="festival-seen-count">
+                          {festivalArtists.filter((act) => act.seen).length}/{festivalArtists.length} selected
+                        </span>
+                      </div>
+
+                      {lineupLoading ? (
+                        <div className="festival-lineup-loading"><span className="spinner" /> Finding lineup…</div>
+                      ) : null}
+                      {lineupMessage ? <p className="meta festival-lineup-message">{lineupMessage}</p> : null}
+
+                      <div className="festival-lineup-actions">
+                        <button type="button" className="ghost small" onClick={() => setAllFestivalArtists(true)}>Select all</button>
+                        <button type="button" className="ghost small" onClick={() => setAllFestivalArtists(false)}>Clear all</button>
+                        <div className="festival-add-artist">
+                          <input
+                            className="input"
+                            value={lineupSearch}
+                            onChange={(event) => setLineupSearch(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                addFestivalArtist();
+                              }
+                            }}
+                            placeholder="Add a missing artist"
+                          />
+                          <button type="button" className="ghost small" onClick={addFestivalArtist}>Add</button>
                         </div>
                       </div>
-                    ) : null}
+
+                      {festivalArtists.length ? (
+                        <div className="festival-seen-picker">
+                          {festivalArtists
+                            .filter((act) => !lineupSearch.trim() || act.name.toLowerCase().includes(lineupSearch.trim().toLowerCase()))
+                            .map((act) => (
+                              <label key={act.name} className={act.seen ? 'selected' : ''}>
+                                <input
+                                  type="checkbox"
+                                  checked={act.seen}
+                                  onChange={(event) => setFestivalArtists((current) => current.map((item) => item.name === act.name ? { ...item, seen: event.target.checked } : item))}
+                                />
+                                <span>{act.name}</span>
+                                {act.setlist ? <em>Setlist found</em> : null}
+                              </label>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="empty festival-lineup-empty">No lineup found yet. Add artists above.</div>
+                      )}
+
+                      <details className="festival-manual-lineup">
+                        <summary>Edit the full lineup as text</summary>
+                        <div className="field">
+                          <input
+                            id="festival-lineup"
+                            className="input"
+                            value={lineupInput}
+                            onChange={(event) => updateFestivalLineup(event.target.value)}
+                            placeholder="Neck Deep, Hot Mulligan, The Wonder Years"
+                          />
+                        </div>
+                      </details>
+                    </div>
                   </>
                 ) : null}
               </div>
@@ -732,6 +897,9 @@ ${setlistValue}`);
                     </div>
                     <Stars
                       value={ratings[key]}
+                      compact
+                      showValue
+                      label={`${label} rating`}
                       onChange={(value) =>
                         setRatings((current) => ({
                           ...current,

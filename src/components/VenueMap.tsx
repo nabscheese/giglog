@@ -179,6 +179,7 @@ function smoothPath(points: GraphicPoint[]) {
 export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   const mapNode = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
+  const mapBounds = useRef<[number, number][]>([]);
   const [range, setRange] = useState<Range>('all');
   const [selectedCity, setSelectedCity] = useState('all');
   const [resolvedGigs, setResolvedGigs] = useState(gigs);
@@ -265,6 +266,23 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
     }));
   }, [filtered]);
 
+  const mapVenues = useMemo(() => {
+    const grouped = new Map<string, VenueGig[]>();
+    rangeFiltered.forEach((gig) => {
+      const key = venueKey(gig);
+      grouped.set(key, [...(grouped.get(key) || []), gig]);
+    });
+    return [...grouped.values()].map((items) => ({
+      key: venueKey(items[0]),
+      venue: items[0].venue_name,
+      city: items[0].city,
+      country: items[0].country,
+      latitude: items.find((item) => item.latitude != null)?.latitude ?? null,
+      longitude: items.find((item) => item.longitude != null)?.longitude ?? null,
+      gigs: items.sort((a, b) => b.event_date.localeCompare(a.event_date)),
+    }));
+  }, [rangeFiltered]);
+
   const journey = useMemo(
     () => [...filtered].sort((a, b) => a.event_date.localeCompare(b.event_date)),
     [filtered],
@@ -288,7 +306,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
   }, [journey]);
 
   async function locateMissingVenues() {
-    const missing = venues.filter((venue) => venue.latitude == null || venue.longitude == null);
+    const missing = mapVenues.filter((venue) => venue.latitude == null || venue.longitude == null);
     if (!missing.length) return;
 
     setGeocoding(true);
@@ -368,7 +386,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         }).addTo(map);
 
         const bounds: [number, number][] = [];
-        venues
+        mapVenues
           .filter((venue) => venue.latitude != null && venue.longitude != null)
           .forEach((venue) => {
             const coords: [number, number] = [venue.latitude!, venue.longitude!];
@@ -394,16 +412,9 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
             L.marker(coords, { icon }).addTo(map).bindPopup(popup);
           });
 
-        if (selectedCity !== 'all' && bounds.length) {
-          const centre: [number, number] = [
-            bounds.reduce((total, point) => total + point[0], 0) / bounds.length,
-            bounds.reduce((total, point) => total + point[1], 0) / bounds.length,
-          ];
-          map.setView([54.5, -3.2], 5);
-          window.setTimeout(() => {
-            if (!cancelled) map.flyTo(centre, bounds.length === 1 ? 13 : 11, { duration: 1.25 });
-          }, 120);
-        } else if (bounds.length > 1) {
+        mapBounds.current = bounds;
+
+        if (bounds.length > 1) {
           map.fitBounds(bounds, { padding: [38, 38], maxZoom: 12 });
         } else if (bounds.length === 1) {
           map.setView(bounds[0], 13);
@@ -418,11 +429,20 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
       mapInstance.current?.remove();
       mapInstance.current = null;
     };
-  }, [venues, selectedCity]);
+  }, [mapVenues]);
 
-  const locatedCount = venues.filter((venue) => venue.latitude != null).length;
+  const locatedCount = mapVenues.filter((venue) => venue.latitude != null).length;
   const cities = new Set(filtered.map((gig) => gig.city?.trim()).filter(Boolean)).size;
   const selectedStop = activeStop == null ? null : graphicPoints[activeStop] || null;
+
+  function centreMapView() {
+    const map = mapInstance.current;
+    const bounds = mapBounds.current;
+    if (!map) return;
+    if (bounds.length > 1) map.fitBounds(bounds, { padding: [38, 38], maxZoom: 12 });
+    else if (bounds.length === 1) map.setView(bounds[0], 13);
+    else map.setView([54.5, -3.2], 5);
+  }
 
   function resetJourneyView() {
     const reset = { x: 0, y: 0, scale: 1 };
@@ -688,8 +708,11 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
         <div>
           <span className="eyebrow">// explore the real places</span>
           <h3><MapPin size={20} /> Venue map</h3>
+          <p>The map is independent from the trail. Dragging, zooming or filtering the trail will not move it.</p>
         </div>
-        <p>{selectedCity === 'all' ? 'Choose a city above or explore the full route.' : `Map moved to ${selectedCity}. Drag, zoom or tap a venue pin.`}</p>
+        <button className="ghost" type="button" onClick={centreMapView}>
+          <LocateFixed size={14} /> Centre map
+        </button>
       </div>
 
       <div className="journey-map-frame">
@@ -699,7 +722,7 @@ export function VenueMap({ gigs }: { gigs: VenueGig[] }) {
 
       <div className="venue-map-footer">
         <span>{status || (locatedCount ? `${locatedCount} venues mapped.` : 'Venue locations will be added automatically.')}</span>
-        {venues.some((venue) => venue.latitude == null) ? (
+        {mapVenues.some((venue) => venue.latitude == null) ? (
           <button className="ghost" type="button" disabled={geocoding} onClick={() => void locateMissingVenues()}>
             <RefreshCw size={14} /> {geocoding ? 'Locating…' : 'Retry missing venues'}
           </button>

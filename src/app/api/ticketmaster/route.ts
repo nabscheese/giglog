@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
 
   const keyword = request.nextUrl.searchParams.get('keyword')?.trim() || '';
   const city = request.nextUrl.searchParams.get('city')?.trim() || '';
+  const mode = request.nextUrl.searchParams.get('mode') === 'festival' ? 'festival' : 'gig';
 
   if (!keyword && !city) {
     return NextResponse.json({ events: [] });
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
   url.searchParams.set('apikey', key);
   url.searchParams.set('classificationName', 'music');
   url.searchParams.set('countryCode', 'GB');
-  url.searchParams.set('sort', 'date,desc');
+  url.searchParams.set('sort', mode === 'festival' ? 'relevance,desc' : 'date,desc');
   url.searchParams.set('size', '20');
 
   if (keyword) url.searchParams.set('keyword', keyword);
@@ -48,7 +49,18 @@ export async function GET(request: NextRequest) {
     const events = (body?._embedded?.events || []).map(
       (event: Record<string, any>) => {
         const venue = event?._embedded?.venues?.[0];
-        const attraction = event?._embedded?.attractions?.[0];
+        const attractions = event?._embedded?.attractions || [];
+        const attraction = attractions[0];
+
+        const classificationValues = (event?.classifications || []).flatMap((classification: Record<string, any>) => [
+          classification?.segment?.name,
+          classification?.genre?.name,
+          classification?.subGenre?.name,
+          classification?.type?.name,
+          classification?.subType?.name,
+        ]).filter(Boolean).map((value: string) => value.toLowerCase());
+        const eventName = String(event.name || '');
+        const isFestival = eventName.toLowerCase().includes('festival') || classificationValues.some((value: string) => value.includes('festival'));
 
         return {
           id: event.id,
@@ -66,15 +78,19 @@ export async function GET(request: NextRequest) {
               (image: Record<string, any>) =>
                 image.ratio === '16_9' && Number(image.width) >= 640,
             )?.url || event?.images?.[0]?.url || null,
-          festival:
-            event?.classifications?.[0]?.subGenre?.name === 'Music Festival'
-              ? event.name
-              : null,
+          festival: isFestival || mode === 'festival' ? eventName : null,
+          lineup: attractions
+            .map((item: Record<string, any>) => String(item?.name || '').trim())
+            .filter(Boolean),
         };
       },
     );
 
-    return NextResponse.json({ events });
+    const filteredEvents = mode === 'festival'
+      ? events.filter((event: Record<string, any>) => event.festival)
+      : events;
+
+    return NextResponse.json({ events: filteredEvents });
   } catch {
     return NextResponse.json(
       { error: 'Could not reach Ticketmaster.' },
