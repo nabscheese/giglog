@@ -12,7 +12,7 @@ const guestLinks = [
 ] as const;
 
 const memberLinks = [
-  ['/dashboard', 'Dashboard'], ['/memories', 'Memories'], ['/feed', 'Feed'], ['/discover', 'Discover'], ['/artists', 'Artists'], ['/venues', 'Venues'], ['/festivals', 'Festivals'], ['/people', 'People'], ['/stats', 'Stats'], ['/achievements', 'Badges'], ['/passport', 'Passport'],
+  ['/dashboard', 'Dashboard'], ['/memories', 'Memories'], ['/feed', 'Feed'], ['/discover', 'Discover'], ['/artists', 'Artists'], ['/venues', 'Venues'], ['/festivals', 'Festivals'], ['/people', 'People'], ['/stats', 'Stats'], ['/wrapped', 'Wrapped'], ['/achievements', 'Badges'], ['/passport', 'Passport'],
 ] as const;
 
 export function Nav() {

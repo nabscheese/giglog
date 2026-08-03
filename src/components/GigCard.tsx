@@ -36,7 +36,7 @@ export function GigCard({ gig }: { gig: Gig }) {
         {photo ? (
           <div className="ticket-photo">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={photo} alt="" />
+            <img src={photo} alt="" loading="lazy" decoding="async" />
             <span>MEMORY CAPTURED</span>
           </div>
         ) : null}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ExternalLink, Pencil, Trash2 } from 'lucide-react';
+import { CalendarDays, Camera, ExternalLink, MapPin, Music2, Pencil, Ticket, Trash2 } from 'lucide-react';
 import { Nav } from '@/components/Nav';
 import { Stars } from '@/components/Stars';
 import { LikeButton } from '@/components/LikeButton';
@@ -92,7 +92,7 @@ export default function GigDetail() {
   const own = gig.user_id === user?.id;
 
   return <><Nav /><main className="shell narrow">
-    <section className="hero"><div><div className="eyebrow">// {new Date(`${gig.event_date}T00:00:00`).toLocaleDateString('en-GB', { dateStyle: 'long' })}</div><h1>{gig.artist_name}</h1><p className="hero-copy">{gig.venue_name}{gig.city ? `, ${gig.city}` : ''}{gig.festival_name ? ` · ${gig.festival_name}` : ''}</p></div>{own ? <div className="button-row"><button className="ghost" onClick={() => setEditing(!editing)}><Pencil size={16} /> {editing ? 'Cancel' : 'Edit'}</button><button className="danger" onClick={() => void remove()}><Trash2 size={16} /> Delete</button></div> : null}</section>
+    <section className="memory-page-header"><Link href="/memories">← Back to memories</Link>{own ? <div className="button-row"><button className="ghost" onClick={() => setEditing(!editing)}><Pencil size={16} /> {editing ? 'Cancel' : 'Edit memory'}</button><button className="danger" onClick={() => void remove()}><Trash2 size={16} /> Delete</button></div> : null}</section>
 
     {editing ? <form className="panel" onSubmit={save}><div className="formgrid">
       <div className="field"><label>Artist</label><input className="input" name="artist" defaultValue={gig.artist_name} required /></div>
@@ -105,7 +105,44 @@ export default function GigDetail() {
       <div className="field"><label>Ticket URL</label><input className="input" type="url" name="ticket_url" defaultValue={gig.ticket_url || ''} /></div>
       {ratingFields.map((field) => <div className="field" key={field}><label>{field} rating</label><Stars value={ratings[field] || 0} onChange={(value) => setRatings({ ...ratings, [field]: value })} /></div>)}
     </div><PhotoUploader userId={user?.id || ''} urls={photos} onChange={setPhotos} /><div className="field"><label>Setlist</label><textarea className="textarea" name="setlist" defaultValue={gig.setlist || ''} /></div><div className="field"><label>Review</label><textarea className="textarea" name="notes" defaultValue={gig.notes || ''} /></div><label className="toggle"><input type="checkbox" name="is_public" defaultChecked={gig.is_public !== false} /> Public</label>{error ? <p className="error">{error}</p> : null}<button className="btn">Save changes</button></form> : <>
-      <article className="panel detail"><div className="detail-grid"><div><span className="pill">{gig.event_type || 'gig'}</span><Stars value={gig.overall_rating} /><p className="note review-text">{gig.notes || 'No review added.'}</p>{gig.ticket_url ? <a className="ghost dark inline" href={gig.ticket_url} target="_blank" rel="noreferrer">Ticket page <ExternalLink size={14} /></a> : null}<p className="meta">Logged by <Link href={`/u/${gig.profiles?.username}`}>{gig.profiles?.display_name || gig.profiles?.username || 'fan'}</Link></p></div><div className="rating-list">{[['Performance', gig.performance_rating], ['Sound', gig.sound_rating], ['Crowd', gig.crowd_rating], ['Venue', gig.venue_rating], ['Value', gig.value_rating]].map(([label, value]) => <div key={String(label)}><span>{label}</span><strong>{value || gig.overall_rating}/5</strong></div>)}</div></div>{gig.photo_urls?.length ? <div className="photo-gallery">{gig.photo_urls.map((url) => <img key={url} src={url} alt="Gig memory" />)}</div> : null}{gig.setlist ? <><h3>{gig.event_type === 'festival' ? 'Festival setlists' : 'Setlist'}</h3><pre className="setlist">{gig.setlist}</pre></> : null}<LikeButton gigId={gig.id} /></article>
+      <article className="memory-detail">
+        <section className={`memory-hero${gig.photo_urls?.[0] ? ' has-photo' : ''}`} style={gig.photo_urls?.[0] ? { backgroundImage: `linear-gradient(90deg, rgba(10,10,10,.95) 0%, rgba(10,10,10,.72) 48%, rgba(10,10,10,.15) 100%), url("${gig.photo_urls[0]}")` } : undefined}>
+          <div className="memory-hero-copy">
+            <div className="memory-kicker"><span>{gig.event_type || 'gig'}</span><span>{new Date(`${gig.event_date}T00:00:00`).getFullYear()}</span></div>
+            <h2>{gig.artist_name}</h2>
+            <div className="memory-location"><MapPin size={16} /> {gig.venue_name}{gig.city ? ` · ${gig.city}` : ''}</div>
+            <div className="memory-date"><CalendarDays size={16} /> {new Date(`${gig.event_date}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+            <div className="memory-overall"><strong>{gig.overall_rating.toFixed(1)}</strong><div><Stars value={gig.overall_rating} compact /><span>Overall rating</span></div></div>
+          </div>
+        </section>
+
+        <section className="memory-content-grid">
+          <div className="memory-main-column">
+            <section className="memory-story panel">
+              <div className="memory-section-title"><div><span className="eyebrow">// the memory</span><h3>Your story</h3></div>{gig.ticket_url ? <a className="ghost" href={gig.ticket_url} target="_blank" rel="noreferrer"><Ticket size={15} /> Ticket page <ExternalLink size={13} /></a> : null}</div>
+              <p>{gig.notes || 'No story has been added to this memory yet.'}</p>
+              <p className="meta">Logged by <Link href={`/u/${gig.profiles?.username}`}>{gig.profiles?.display_name || gig.profiles?.username || 'fan'}</Link></p>
+            </section>
+
+            {gig.photo_urls?.length ? <section className="memory-gallery panel"><div className="memory-section-title"><div><span className="eyebrow">// camera roll</span><h3>{gig.photo_urls.length} {gig.photo_urls.length === 1 ? 'photo' : 'photos'}</h3></div><Camera size={22} /></div><div className="memory-photo-grid">{gig.photo_urls.map((url, index) => <a href={url} target="_blank" rel="noreferrer" key={url} className={index === 0 ? 'featured' : ''}><img src={url} alt={`${gig.artist_name} memory ${index + 1}`} /></a>)}</div></section> : null}
+
+            {gig.festival_artists?.length ? <section className="memory-lineup panel"><div className="memory-section-title"><div><span className="eyebrow">// your festival</span><h3>Artists you saw</h3></div><Music2 size={22} /></div><div className="memory-artist-tags">{gig.festival_artists.filter((artist) => artist.seen).map((artist) => <span key={artist.name}>{artist.name}{artist.setlist ? ' ✓' : ''}</span>)}</div></section> : null}
+
+            {gig.setlist ? <section className="memory-setlist panel"><div className="memory-section-title"><div><span className="eyebrow">// songs played</span><h3>{gig.event_type === 'festival' ? 'Festival setlists' : 'Setlist'}</h3></div><Music2 size={22} /></div><pre>{gig.setlist}</pre></section> : null}
+          </div>
+
+          <aside className="memory-side-column">
+            <section className="memory-scorecard panel"><span className="eyebrow">// scorecard</span><h3>The verdict</h3>{[
+              ['Performance', gig.performance_rating],
+              ['Sound', gig.sound_rating],
+              ['Crowd', gig.crowd_rating],
+              ['Venue', gig.venue_rating],
+              ['Value', gig.value_rating],
+            ].map(([label, value]) => <div className="memory-score-row" key={String(label)}><span>{label}</span><div><Stars value={Number(value || gig.overall_rating)} compact /><strong>{value || gig.overall_rating}/5</strong></div></div>)}</section>
+            <section className="memory-actions panel"><LikeButton gigId={gig.id} /></section>
+          </aside>
+        </section>
+      </article>
       <section className="panel comments"><h2>Comments <span className="accent">({comments.length})</span></h2>{comments.map((item) => <div className="comment" key={item.id}><strong>{item.profiles?.display_name || item.profiles?.username || 'Fan'}</strong><span className="meta">{new Date(item.created_at).toLocaleString('en-GB')}</span><p>{item.body}</p></div>)}{user ? <form className="comment-form" onSubmit={addComment}><input className="input" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a comment…" /><button className="btn small">Post</button></form> : <button className="ghost" onClick={() => openAuth('in')}>Log in to comment</button>}</section>
     </>}
   </main></>;
